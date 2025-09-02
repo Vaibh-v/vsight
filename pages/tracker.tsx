@@ -1,10 +1,167 @@
-import Nav from "../components/Nav";import GSCSitePicker from "../components/GSCSitePicker";import { useEffect,useState } from "react";import { toCSV } from "../lib/util";
-export default function Tracker(){const[siteUrl,setSiteUrl]=useState<string>("");const[keywords,setKeywords]=useState<string>("");const[location,setLocation]=useState<string>("");const[days,setDays]=useState<number>(1);const[topN,setTopN]=useState<number>(10);const[running,setRunning]=useState(false);const[log,setLog]=useState<string>("");const[rows,setRows]=useState<any[]>([]);const[headers,setHeaders]=useState<string[]>([]);
-const recent=async()=>{try{const r=await fetch("/api/tracker/recent");const j=await r.json();if(r.ok){setRows(j.rows||[]);setHeaders(j.headers||[]);}}catch{}};useEffect(()=>{recent();},[]);
-const run=async()=>{setRunning(true);setLog("");try{const r=await fetch("/api/tracker/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({siteUrl,keywords:keywords.split(',').map(s=>s.trim()).filter(Boolean),location,days,topN})});const j=await r.json();if(!r.ok) throw new Error(j.error||"Failed");setLog(j.message||"Done");await recent();}catch(e:any){setLog(e.message);}finally{setRunning(false);}};
-const downloadCSV=()=>{const csv=toCSV(rows,headers);const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="tracker_recent.csv";a.click();URL.revokeObjectURL(url);};
-return(<main><Nav/><div className="max-w-5xl mx-auto p-6 space-y-4"><h1 className="text-xl font-bold">Organic Tracker</h1><p className="text-sm text-gray-600">Top-N query+page pairs by average position. Optional SERP snapshot with location.</p>
-<div className="grid md:grid-cols-2 gap-4"><div><label className="text-sm font-medium">GSC Site</label><GSCSitePicker value={siteUrl} onChange={setSiteUrl}/></div><div><label className="text-sm font-medium">Keywords (optional)</label><input className="w-full border rounded p-2" placeholder="comma-separated" value={keywords} onChange={e=>setKeywords(e.target.value)}/></div><div><label className="text-sm font-medium">Location for SERP (optional)</label><input className="w-full border rounded p-2" placeholder="e.g., Dallas, US-TX" value={location} onChange={e=>setLocation(e.target.value)}/></div><div className="grid grid-cols-2 gap-2"><div><label className="text-sm font-medium">Days</label><input type="number" min={1} max={28} className="w-full border rounded p-2" value={days} onChange={e=>setDays(parseInt(e.target.value||"1"))}/></div><div><label className="text-sm font-medium">Top N</label><input type="number" min={1} max={20} className="w-full border rounded p-2" value={topN} onChange={e=>setTopN(parseInt(e.target.value||"10"))}/></div></div></div>
-<div className="p-4 border rounded-lg space-y-3"><button className="px-4 py-2 rounded bg-black text-white disabled:opacity-50" onClick={run} disabled={running||!siteUrl}>{running?"Running…":"Run Now"}</button><button className="px-4 py-2 rounded bg-gray-200 disabled:opacity-50" onClick={downloadCSV} disabled={!rows.length}>Download recent CSV</button><pre className="text-xs bg-gray-50 p-3 rounded whitespace-pre-wrap">{log}</pre></div>
-<div className="p-4 border rounded-lg overflow-auto"><table className="text-xs w-full"><thead><tr>{headers.map(h=><th key={h} className="text-left p-2 border-b">{h}</th>)}</tr></thead><tbody>{rows.map((r,i)=>(<tr key={i} className="border-b">{headers.map(h=><td key={h} className="p-2">{String((r as any)[h]??"")}</td>)}</tr>))}</tbody></table></div>
-</div></main>);}
+import { useSession } from "next-auth/react";
+import useSWR from "swr";
+import { useEffect, useState } from "react";
+import { useAppState } from "../components/state/AppStateProvider";
+import { lastNDays, toCSV } from "../lib/util";
+
+export default function Tracker() {
+  const { status } = useSession();
+  const { gscSiteUrl, dateRange, setSelections } = useAppState();
+
+  // default date range on first load
+  useEffect(() => {
+    if (!dateRange) {
+      const r = lastNDays(28);
+      setSelections({ dateRange: { start: r.startDate, end: r.endDate } });
+    }
+  }, [dateRange, setSelections]);
+
+  const start = dateRange?.start;
+  const end = dateRange?.end;
+
+  // list available GSC sites for the signed-in user
+  const { data: gscSites } = useSWR(
+    status === "authenticated" ? "/api/gsc/sites" : null
+  );
+
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const canRun = !!(gscSiteUrl && start && end);
+
+  const run = async () => {
+    if (!canRun) return;
+    setLoading(true);
+    setRows([]);
+    try {
+      const res = await fetch(
+        `/api/gsc/top10?siteUrl=${encodeURIComponent(
+          gscSiteUrl!
+        )}&start=${start}&end=${end}`
+      );
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || "Failed");
+      setRows(j.rows || []);
+    } catch (e: any) {
+      alert(e.message || "Unexpected error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const download = () => {
+    const csv = toCSV(rows, ["query", "clicks", "impressions", "ctr", "position"]);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `vsight-top10-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  if (status !== "authenticated") {
+    return (
+      <main className="max-w-5xl mx-auto p-6">
+        Please sign in on the <a className="underline" href="/connections">Connections</a> page.
+      </main>
+    );
+  }
+
+  const gscOptions = (gscSites?.sites || []).map((s: any) => s);
+
+  return (
+    <main className="max-w-6xl mx-auto p-6 space-y-6">
+      <h1 className="text-2xl font-semibold">Organic Tracker</h1>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+        <div>
+          <label className="text-sm text-gray-600">GSC Site</label>
+          <select
+            className="mt-1 w-full border rounded px-3 py-2"
+            value={gscSiteUrl || ""}
+            onChange={(e) => setSelections({ gscSiteUrl: e.target.value })}
+          >
+            <option value="">Select GSC site…</option>
+            {gscOptions.map((s: any) => (
+              <option key={s.siteUrl} value={s.siteUrl}>
+                {s.siteUrl}
+              </option>
+            ))}
+          </select>
+
+          {start && end && (
+            <p className="text-xs text-gray-500 mt-2">
+              Date range: {start} → {end}
+            </p>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => setSelections({ dateRange: lastNDays(28) })}
+            className="px-3 py-2 border rounded"
+          >
+            Last 28 days
+          </button>
+          <button
+            onClick={() => setSelections({ dateRange: lastNDays(90) })}
+            className="px-3 py-2 border rounded"
+          >
+            Last 90 days
+          </button>
+        </div>
+
+        <div className="flex gap-2 justify-end">
+          <button
+            onClick={run}
+            disabled={!canRun || loading}
+            className="px-4 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+          >
+            {loading ? "Running…" : "Run"}
+          </button>
+          <button
+            onClick={download}
+            disabled={!rows.length}
+            className="px-4 py-2 rounded border"
+          >
+            Download CSV
+          </button>
+        </div>
+      </div>
+
+      <div className="border rounded-lg overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="p-2 text-left">Query</th>
+              <th className="p-2 text-right">Clicks</th>
+              <th className="p-2 text-right">Impr.</th>
+              <th className="p-2 text-right">CTR</th>
+              <th className="p-2 text-right">Avg Pos</th>
+            </tr>
+          </thead>
+          <tbody>
+            {!rows.length ? (
+              <tr>
+                <td className="p-3 text-gray-500" colSpan={5}>
+                  Run the tracker to see Top-10 queries.
+                </td>
+              </tr>
+            ) : (
+              rows.map((r, i) => (
+                <tr key={i} className={i % 2 ? "bg-white" : "bg-gray-50/50"}>
+                  <td className="p-2">{r.query}</td>
+                  <td className="p-2 text-right">{r.clicks}</td>
+                  <td className="p-2 text-right">{r.impressions}</td>
+                  <td className="p-2 text-right">{(r.ctr * 100).toFixed(2)}%</td>
+                  <td className="p-2 text-right">
+                    {r.position?.toFixed ? r.position.toFixed(1) : r.position}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </main>
+  );
+}
