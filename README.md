@@ -1,0 +1,1 @@
+# VSight — Unified Analytics\n\nSee /pages for routes. Fill .env.local with Google OAuth keys. Run `npm install` then `npm run dev`.\n

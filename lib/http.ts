@@ -1,0 +1,2 @@
+export async function fetchWithRetry(input: RequestInfo|URL, init: RequestInit={}, retries=3, backoffMs=500){
+  let last:any=null; for(let i=0;i<=retries;i++){ try{ const r=await fetch(input,init); if(r.ok) return r; if(![429,500,502,503,504].includes(r.status)) return r; last=new Error('HTTP '+r.status);}catch(e:any){last=e;} if(i<retries) await new Promise(res=>setTimeout(res, backoffMs*Math.pow(2,i))); } throw last||new Error('fetchWithRetry failed');}

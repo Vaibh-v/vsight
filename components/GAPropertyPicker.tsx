@@ -1,0 +1,5 @@
+import { useEffect,useState } from "react";type Property={property:string;displayName:string};
+export default function GAPropertyPicker({value,onChange}:{value?:string;onChange:(v:string)=>void}){const[loading,setLoading]=useState(false);const[properties,setProperties]=useState<Property[]>([]);const[error,setError]=useState<string|null>(null);
+useEffect(()=>{(async()=>{setLoading(true);setError(null);try{const r=await fetch("/api/google/ga/properties");const j=await r.json();if(!r.ok) throw new Error(j.error||"Failed to load GA properties");setProperties(j.properties||[]);}catch(e:any){setError(e.message);}finally{setLoading(false);}})();},[]);
+if(loading) return <p>Loading GA properties…</p>; if(error) return <p className="text-red-600 text-sm">{error}</p>; if(!properties.length) return <p className="text-sm text-gray-500">No GA4 properties found.</p>;
+return(<select className="w-full border rounded p-2" value={value} onChange={e=>onChange(e.target.value)}>{properties.map(p=><option key={p.property} value={p.property}>{p.displayName} ({p.property.replace("properties/","")})</option>)}</select>);}

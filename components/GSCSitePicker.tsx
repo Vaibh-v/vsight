@@ -1,0 +1,5 @@
+import { useEffect,useState } from "react";
+export default function GSCSitePicker({value,onChange}:{value?:string;onChange:(v:string)=>void}){const[loading,setLoading]=useState(false);const[sites,setSites]=useState<string[]>([]);const[error,setError]=useState<string|null>(null);
+useEffect(()=>{(async()=>{setLoading(true);setError(null);try{const r=await fetch("/api/google/gsc/sites");const j=await r.json();if(!r.ok) throw new Error(j.error||"Failed to load GSC sites");setSites(j.sites||[]);}catch(e:any){setError(e.message);}finally{setLoading(false);}})();},[]);
+if(loading) return <p>Loading GSC sites…</p>; if(error) return <p className="text-red-600 text-sm">{error}</p>; if(!sites.length) return <p className="text-sm text-gray-500">No GSC sites found.</p>;
+return(<select className="w-full border rounded p-2" value={value} onChange={e=>onChange(e.target.value)}>{sites.map(s=><option key={s} value={s}>{s}</option>)}</select>);}
