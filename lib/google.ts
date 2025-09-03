@@ -82,3 +82,39 @@ export async function gscQuery(
   }
   return res.json();
 }
+// --- GA4: runReport ---
+export type GaRunReportRequest = {
+  dimensions?: { name: string }[];
+  metrics?: { name: string }[];
+  dateRanges: { startDate: string; endDate: string }[];
+  dimensionFilter?: any;
+  metricFilter?: any;
+  orderBys?: any[];
+  limit?: string;
+};
+
+export async function gaRunReport(
+  accessToken: string,
+  propertyId: string,
+  body: GaRunReportRequest
+) {
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
+    propertyId
+  )}:runReport`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`GA4 runReport failed ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+\
