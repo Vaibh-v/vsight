@@ -1,75 +1,79 @@
-import { useSession } from "next-auth/react";
-import { useState } from "react";
 import useSWR from "swr";
 import { useAppState } from "../components/state/AppStateProvider";
 
-type GbpLoc = { name: string; title?: string; websiteUri?: string };
+const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
-export default function Connections() {
-  const { data: session } = useSession();
-  const { state, setState } = useAppState();
-  const [gbpEnabled, setGbpEnabled] = useState(false);
+export default function ConnectionsPage() {
+  const { gaPropertyId, gscSiteUrl, gbpLocationName, setState } = useAppState();
 
-  const { data: gbp, error: gbpErr, isLoading: gbpLoading } = useSWR(
-    gbpEnabled ? "/api/google/gbp/locations" : null
-  );
+  const { data: ga, error: gaErr, isLoading: gaLoading } = useSWR("/api/google/ga/properties", fetcher);
+  const { data: gsc, error: gscErr, isLoading: gscLoading } = useSWR("/api/google/gsc/sites", fetcher);
+  const { data: gbp, error: gbpErr, isLoading: gbpLoading } = useSWR("/api/gbp/locations", fetcher);
 
   return (
-    <main className="max-w-5xl mx-auto p-6">
-      <h1 className="text-2xl font-bold mb-4">Connections</h1>
+    <div className="max-w-4xl mx-auto space-y-6 py-8">
+      <h1 className="text-2xl font-semibold">Connections</h1>
 
-      {!session ? (
-        <div className="p-4 border rounded bg-yellow-50">
-          Please <span className="font-semibold">Sign in with Google</span> on the home page first.
-        </div>
-      ) : (
-        <>
-          {/* GA4 + GSC selections are already in your app.
-              Keeping this section minimal and focusing on GBP add */}
+      {/* GA4 */}
+      <div className="border rounded-lg p-4">
+        <div className="font-medium mb-2">Google Analytics 4</div>
+        {gaErr && <p className="text-red-600 text-sm">GA error: {String(gaErr.message || gaErr.error || gaErr)}</p>}
+        <select
+          disabled={gaLoading || gaErr}
+          className="border rounded p-2 w-full"
+          value={gaPropertyId || ""}
+          onChange={(e) => setState({ gaPropertyId: e.target.value })}
+        >
+          <option value="">Select a property</option>
+          {(ga?.properties || []).map((p: any) => (
+            <option key={p.propertyId} value={p.propertyId}>
+              {p.displayName} (prop {p.propertyId})
+            </option>
+          ))}
+        </select>
+      </div>
 
-          <section className="mt-6 p-4 border rounded">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Google Business Profile</h2>
-              <button
-                className="px-3 py-1 rounded bg-indigo-600 text-white"
-                onClick={() => setGbpEnabled(true)}
-                disabled={gbpEnabled || gbpLoading}
-              >
-                {gbpLoading ? "Loading..." : gbpEnabled ? "Loaded" : "Load Locations"}
-              </button>
-            </div>
+      {/* GSC */}
+      <div className="border rounded-lg p-4">
+        <div className="font-medium mb-2">Google Search Console</div>
+        {gscErr && <p className="text-red-600 text-sm">GSC error: {String(gscErr.message || gscErr.error || gscErr)}</p>}
+        <select
+          disabled={gscLoading || gscErr}
+          className="border rounded p-2 w-full"
+          value={gscSiteUrl || ""}
+          onChange={(e) => setState({ gscSiteUrl: e.target.value })}
+        >
+          <option value="">Select a site</option>
+          {(gsc?.sites || []).map((s: any) => (
+            <option key={s.siteUrl} value={s.siteUrl}>
+              {s.siteUrl}
+            </option>
+          ))}
+        </select>
+      </div>
 
-            {gbpErr && (
-              <p className="text-sm text-red-600 mt-2">
-                {String(gbpErr)}. Ensure Business Profile APIs are enabled and you have access.
-              </p>
-            )}
-
-            {gbp?.locations && (
-              <div className="mt-3 grid gap-2">
-                {(gbp.locations as GbpLoc[]).map((loc) => (
-                  <button
-                    key={loc.name}
-                    className={`text-left p-3 border rounded hover:bg-gray-50 ${
-                      state.gbpLocation?.name === loc.name ? "border-indigo-600" : ""
-                    }`}
-                    onClick={() => setState({ gbpLocation: loc })}
-                  >
-                    <div className="font-medium">{loc.title || loc.name}</div>
-                    <div className="text-xs text-gray-500">{loc.websiteUri || "No website"}</div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {state.gbpLocation && (
-              <div className="mt-3 text-sm text-gray-700">
-                Selected: <span className="font-medium">{state.gbpLocation.title || state.gbpLocation.name}</span>
-              </div>
-            )}
-          </section>
-        </>
-      )}
-    </main>
+      {/* GBP */}
+      <div className="border rounded-lg p-4">
+        <div className="font-medium mb-2">Google Business Profile</div>
+        {gbpErr && (
+          <p className="text-red-600 text-sm">
+            GBP error: {String(gbpErr.message || gbpErr.error || gbpErr)} (Enable Business Profile APIs & scopes)
+          </p>
+        )}
+        <select
+          disabled={gbpLoading || gbpErr}
+          className="border rounded p-2 w-full"
+          value={gbpLocationName || ""}
+          onChange={(e) => setState({ gbpLocationName: e.target.value })}
+        >
+          <option value="">Select a location</option>
+          {(gbp?.locations || []).map((l: any) => (
+            <option key={l.name} value={l.name}>
+              {l.title}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
   );
 }
