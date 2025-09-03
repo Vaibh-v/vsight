@@ -133,3 +133,84 @@ export async function gscListSites(accessToken: string): Promise<GscSite[]> {
   // Response shape: { siteEntry: [{siteUrl, permissionLevel}, ...] }
   return (json.siteEntry ?? []) as GscSite[];
 }
+// ---------- GSC: time-series (date) clicks/impressions/ctr/position ----------
+export async function gscTimeseriesClicks(
+  accessToken: string,
+  siteUrl: string,
+  startDate: string,
+  endDate: string,
+  opts?: { country?: string; type?: "web" | "image" | "video" | "news" }
+) {
+  const dimensionFilterGroups =
+    opts?.country
+      ? [
+          {
+            groupType: "and",
+            filters: [{ dimension: "country", operator: "equals", expression: opts.country }],
+          },
+        ]
+      : undefined;
+
+  const json = await gscQuery(accessToken, siteUrl, {
+    startDate,
+    endDate,
+    dimensions: ["date"],
+    rowLimit: 25000,
+    type: opts?.type ?? "web",
+    dimensionFilterGroups,
+    dataState: "final",
+  });
+
+  // rows: [{ keys: ["2024-08-01"], clicks, impressions, ctr, position }, ...]
+  const rows = (json.rows ?? []).map((r: any) => ({
+    date: r.keys?.[0] ?? "",
+    clicks: r.clicks ?? 0,
+    impressions: r.impressions ?? 0,
+    ctr: r.ctr ?? 0,
+    position: r.position ?? 0,
+  }));
+
+  return rows;
+}
+
+// ---------- GSC: top queries helper (useful for tracker & dashboard) ----------
+export async function gscTopQueries(
+  accessToken: string,
+  siteUrl: string,
+  startDate: string,
+  endDate: string,
+  opts?: {
+    country?: string;
+    type?: "web" | "image" | "video" | "news";
+    rowLimit?: number;
+  }
+) {
+  const dimensionFilterGroups =
+    opts?.country
+      ? [
+          {
+            groupType: "and",
+            filters: [{ dimension: "country", operator: "equals", expression: opts.country }],
+          },
+        ]
+      : undefined;
+
+  const json = await gscQuery(accessToken, siteUrl, {
+    startDate,
+    endDate,
+    dimensions: ["query"],
+    rowLimit: opts?.rowLimit ?? 100,
+    type: opts?.type ?? "web",
+    dimensionFilterGroups,
+    dataState: "final",
+  });
+
+  // rows: [{ keys: ["query text"], clicks, impressions, ctr, position }, ...]
+  return (json.rows ?? []).map((r: any) => ({
+    query: r.keys?.[0] ?? "",
+    clicks: r.clicks ?? 0,
+    impressions: r.impressions ?? 0,
+    ctr: r.ctr ?? 0,
+    position: r.position ?? 0,
+  }));
+}
