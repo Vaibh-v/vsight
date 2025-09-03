@@ -214,3 +214,69 @@ export async function gscTopQueries(
     position: r.position ?? 0,
   }));
 }
+// ---------- Drive: find-or-create spreadsheet by name ----------
+export async function driveFindOrCreateSpreadsheet(
+  accessToken: string,
+  name: string
+): Promise<string> {
+  // Search for an existing Google Sheet with this exact name
+  const q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`;
+  const listUrl = `https://www.googleapis.com/drive/v3/files?${new URLSearchParams({
+    q,
+    fields: "files(id,name)",
+    spaces: "drive",
+    pageSize: "10",
+  }).toString()}`;
+
+  const listRes = await fetch(listUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!listRes.ok) {
+    const txt = await listRes.text();
+    throw new Error(`Drive list failed ${listRes.status}: ${txt}`);
+  }
+  const listJson = await listRes.json();
+  const found = (listJson.files ?? [])[0];
+  if (found?.id) return found.id;
+
+  // Create a new Google Sheet
+  const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name,
+      mimeType: "application/vnd.google-apps.spreadsheet",
+    }),
+  });
+  if (!createRes.ok) {
+    const txt = await createRes.text();
+    throw new Error(`Drive create failed ${createRes.status}: ${txt}`);
+  }
+  const created = await createRes.json();
+  if (!created.id) throw new Error("Drive create returned no id");
+  return created.id;
+}
+
+// ---------- Sheets: read a range ----------
+export async function sheetsGet(
+  accessToken: string,
+  spreadsheetId: string,
+  rangeA1: string
+): Promise<{ values?: any[][] }> {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+    spreadsheetId
+  )}/values/${encodeURIComponent(rangeA1)}?majorDimension=ROWS`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Sheets get failed ${res.status}: ${txt}`);
+  }
+  return res.json();
+}
