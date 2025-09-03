@@ -1,158 +1,138 @@
-import { useSession } from "next-auth/react";
+import { useEffect, useMemo } from "react";
 import useSWR from "swr";
-import { useEffect, useMemo, useState } from "react";
 import { useAppState } from "../components/state/AppStateProvider";
-import { iso, lastNDays } from "../lib/util";
-import { TrafficChart } from "../components/Charts";
-
-type GAProp = { id: string; displayName: string };
-
-const PRESETS = [
-  { label: "Last 28 days", days: 28 },
-  { label: "Last 90 days", days: 90 },
-];
+import Kpi from "../components/Kpi";
+import TimeSeries from "../components/charts/TimeSeries";
+import { postJSON, lastNDays } from "../lib/http";
 
 export default function Dashboard() {
-  const { status } = useSession();
-  const { ga4PropertyId, gscSiteUrl, dateRange, setSelections } = useAppState();
+  const { state, setState } = useAppState();
 
-  // initial default date range
-  useEffect(() => {
-    if (!dateRange) {
-      const r = lastNDays(28);
-      setSelections({ dateRange: { start: r.startDate, end: r.endDate } });
-    }
-  }, [dateRange, setSelections]);
+  // Date window
+  const days = state.datePreset === "last28d" ? 28 : 90;
+  const { startDate, endDate } = lastNDays(days);
 
-  const start = dateRange?.start;
-  const end = dateRange?.end;
-
-  const { data: gaProps } = useSWR(status === "authenticated" ? "/api/ga/properties" : null);
-  const { data: gscSites } = useSWR(status === "authenticated" ? "/api/gsc/sites" : null);
-
-  const { data: gaSeries } = useSWR(
-    status === "authenticated" && ga4PropertyId && start && end
-      ? `/api/ga/sessions?propertyId=${ga4PropertyId}&start=${start}&end=${end}`
-      : null
+  // --- GSC Top queries (for quick KPIs) ---
+  const gscKey = state.gscSiteUrl
+    ? ["gsc-top", state.gscSiteUrl, startDate, endDate, state.country]
+    : null;
+  const { data: gscTop } = useSWR(gscKey, ([, site, s, e, country]) =>
+    postJSON("/api/google/gsc/top-queries", {
+      siteUrl: site,
+      startDate: s,
+      endDate: e,
+      country,
+      rowLimit: 100
+    })
   );
 
-  const { data: gscSeries } = useSWR(
-    status === "authenticated" && gscSiteUrl && start && end
-      ? `/api/gsc/timeseries?siteUrl=${encodeURIComponent(gscSiteUrl)}&start=${start}&end=${end}`
-      : null
+  // --- GBP daily metrics (if a location is selected) ---
+  const gbpKey = state.gbpLocation
+    ? [
+        "gbp-daily",
+        state.gbpLocation.name,
+        startDate,
+        endDate,
+        "BUSINESS_INTERACTIONS_WEBSITE_CLICKS,BUSINESS_INTERACTIONS_PHONE_CLICKS"
+      ]
+    : null;
+
+  const { data: gbpDaily } = useSWR(gbpKey, ([, loc, s, e, metrics]) =>
+    fetch(
+      `/api/google/gbp/daily?location=${encodeURIComponent(
+        loc
+      )}&startDate=${s}&endDate=${e}&metrics=${encodeURIComponent(metrics)}`
+    ).then((r) => r.json())
   );
 
-  // merge by date
-  const merged = useMemo(() => {
-    const map = new Map<string, any>();
-    (gaSeries?.rows || gaSeries?.data || []).forEach((r: any) => {
-      map.set(r.date, { date: r.date, sessions: r.sessions ?? 0 });
-    });
-    (gscSeries?.data || []).forEach((r: any) => {
-      const row = map.get(r.date) || { date: r.date };
-      row.clicks = r.clicks ?? 0;
-      row.ctr = Number((r.ctr ?? 0) * 100).toFixed ? Number(((r.ctr ?? 0) * 100).toFixed(2)) : r.ctr;
-      map.set(r.date, row);
-    });
-    return Array.from(map.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
-  }, [gaSeries, gscSeries]);
+  // --- quick numbers from GSC ---
+  const gscClicks = useMemo(() => {
+    const rows = gscTop?.rows || [];
+    return rows.reduce((acc: number, r: any) => acc + (r.clicks || 0), 0);
+  }, [gscTop]);
 
-  // fetch auto insight
-  const [insight, setInsight] = useState<string>("");
+  const gscImpr = useMemo(() => {
+    const rows = gscTop?.rows || [];
+    return rows.reduce((acc: number, r: any) => acc + (r.impressions || 0), 0);
+  }, [gscTop]);
+
+  // GBP chart points
+  const gbpSeries = useMemo(() => {
+    if (!gbpDaily?.timeSeries || !gbpDaily.timeSeries.length) return [];
+    const toX = (d: any) => {
+      const s = `${d.date.year}-${String(d.date.month).padStart(2, "0")}-${String(d.date.day).padStart(2, "0")}`;
+      return new Date(s).getTime();
+    };
+    return gbpDaily.timeSeries.map((t: any) => ({
+      name: t.dimensions?.[0]?.metric || "metric",
+      points: (t.timeSeries || t.dailyMetrics || t.days || t.samples || t.points || t).map((p: any) => ({
+        x: toX(p),
+        y: p.value ?? p.values?.[0]?.value ?? 0
+      }))
+    }));
+  }, [gbpDaily]);
+
   useEffect(() => {
-    (async () => {
-      if (!merged?.length) { setInsight(""); return; }
-      const r = await fetch("/api/insights/summary", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: merged }),
-      });
-      const j = await r.json();
-      setInsight(j.summary || "");
-    })();
-  }, [JSON.stringify(merged)]);
-
-  if (status !== "authenticated") {
-    return <main className="max-w-5xl mx-auto p-6">Please sign in on the Connections page.</main>;
-  }
-
-  const handlePreset = (days: number) => {
-    const r = lastNDays(days);
-    setSelections({ dateRange: { start: r.startDate, end: r.endDate } });
-  };
-
-  const gaOptions: GAProp[] = (gaProps?.properties || []).map((p: any) => p);
-  const gscOptions = (gscSites?.sites || []).map((s: any) => s);
+    // default country = ALL
+    if (!state.country) setState({ country: "ALL" });
+  }, [state.country, setState]);
 
   return (
     <main className="max-w-6xl mx-auto p-6 space-y-6">
-      <h1 className="text-2xl font-semibold">Default Dashboard</h1>
-
-      {/* Selectors */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <label className="text-sm text-gray-600">GA4 Property</label>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <div className="flex gap-2">
           <select
-            className="mt-1 w-full border rounded px-3 py-2"
-            value={ga4PropertyId || ""}
-            onChange={(e) => setSelections({ ga4PropertyId: e.target.value })}
+            className="border rounded px-3 py-1"
+            value={state.datePreset}
+            onChange={(e) => setState({ datePreset: e.target.value as any })}
           >
-            <option value="">Select GA4 property…</option>
-            {gaOptions.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.displayName} (#{p.id})
-              </option>
-            ))}
+            <option value="last28d">Last 28 days</option>
+            <option value="last90d">Last 90 days</option>
+          </select>
+          <select
+            className="border rounded px-3 py-1"
+            value={state.country || "ALL"}
+            onChange={(e) => setState({ country: e.target.value })}
+          >
+            <option value="ALL">All countries</option>
+            <option value="USA">USA</option>
+            <option value="IND">India</option>
+            <option value="GBR">UK</option>
+            <option value="AUS">Australia</option>
+            {/* add more as needed */}
           </select>
         </div>
+      </div>
 
-        <div>
-          <label className="text-sm text-gray-600">GSC Site</label>
-          <select
-            className="mt-1 w-full border rounded px-3 py-2"
-            value={gscSiteUrl || ""}
-            onChange={(e) => setSelections({ gscSiteUrl: e.target.value })}
-          >
-            <option value="">Select GSC site…</option>
-            {gscOptions.map((s: any) => (
-              <option key={s.siteUrl} value={s.siteUrl}>{s.siteUrl}</option>
-            ))}
-          </select>
-        </div>
+      {/* KPI tiles */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Kpi label="GSC Clicks" value={gscClicks || 0} />
+        <Kpi label="GSC Impressions" value={gscImpr || 0} />
+        <Kpi label="GBP Website Clicks" value={gbpSeries[0]?.points?.reduce((a: number, p: any) => a + p.y, 0) || 0} />
+        <Kpi label="GBP Phone Clicks" value={gbpSeries[1]?.points?.reduce((a: number, p: any) => a + p.y, 0) || 0} />
+      </div>
 
-        <div>
-          <label className="text-sm text-gray-600">Date range</label>
-          <div className="mt-1 flex gap-2">
-            {PRESETS.map((p) => (
-              <button
-                key={p.days}
-                onClick={() => handlePreset(p.days)}
-                className={`px-3 py-2 rounded border ${dateRange && (iso(new Date(dateRange.end)) || dateRange.end) ? "" : ""}`}
-              >
-                {p.label}
-              </button>
-            ))}
+      {/* GBP Trend (if selected) */}
+      {state.gbpLocation ? (
+        <section className="border rounded p-4">
+          <div className="font-semibold mb-2">
+            GBP Daily (Website & Phone) — {state.gbpLocation.title || state.gbpLocation.name}
           </div>
-          {start && end && (
-            <p className="text-xs text-gray-500 mt-1">
-              {start} → {end}
-            </p>
+          {gbpSeries.length ? (
+            <TimeSeries
+              series={gbpSeries}
+              height={220}
+            />
+          ) : (
+            <div className="text-sm text-gray-500">No GBP data for the selected window.</div>
           )}
-        </div>
-      </div>
-
-      {/* Chart */}
-      <div className="border rounded-lg p-4">
-        <h2 className="font-medium mb-2">Sessions, Clicks & CTR</h2>
-        <TrafficChart data={merged} />
-      </div>
-
-      {/* AI Insight */}
-      <div className="border rounded-lg p-4">
-        <h2 className="font-medium mb-2">AI Insight</h2>
-        <div className="prose text-sm whitespace-pre-wrap">
-          {insight || "Select a GA4 property and GSC site to see insights."}
-        </div>
-      </div>
+        </section>
+      ) : (
+        <section className="border rounded p-4 text-sm text-gray-500">
+          Select a GBP location in <span className="font-medium">Connections</span> to see GBP trends here.
+        </section>
+      )}
     </main>
   );
 }
