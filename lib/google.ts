@@ -37,7 +37,7 @@ export async function gaRunReport(
 export type GscQueryBody = {
   startDate: string;
   endDate: string;
-  dimensions?: string[]; // e.g. ["date","query","page","country","device"]
+  dimensions?: string[];
   rowLimit?: number;
   type?: "web" | "image" | "video" | "news" | "discover" | "googleNews";
   dimensionFilterGroups?: any[];
