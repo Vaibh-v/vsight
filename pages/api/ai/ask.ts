@@ -1,4 +1,20 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-export default async function handler(req:NextApiRequest,res:NextApiResponse){ if(req.method!=="POST") return res.status(405).json({error:"Method not allowed"}); const {query}=(req.body||{}) as any; if(!query) return res.status(400).json({error:"Missing query"});
-const key=process.env.OPENROUTER_API_KEY||""; const model=process.env.OPENROUTER_MODEL||"openrouter/auto"; if(!key) return res.status(400).json({error:"OPENROUTER_API_KEY not set"});
-try{ const r=await fetch("https://openrouter.ai/api/v1/chat/completions",{method:"POST",headers:{Authorization:`Bearer ${key}`,"Content-Type":"application/json"},body:JSON.stringify({model, messages:[{role:"system",content:"You are an analytics copilot. Be concise and actionable."},{role:"user",content:query}]})}); const j=await r.json(); if(!r.ok) return res.status(r.status).json({error:j.error?.message||"OpenRouter error",raw:j}); const answer=j.choices?.[0]?.message?.content||""; res.status(200).json({answer}); }catch(e:any){ res.status(500).json({error:e.message||"Unexpected error"}); } }
+
+// Stub for now; we’ll wire OpenRouter in the next patch.
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  try {
+    let prompt = "";
+    try {
+      prompt = JSON.parse(req.body || "{}").prompt || "";
+    } catch {}
+    return res.status(200).json({
+      text:
+        prompt?.length
+          ? `Thanks! I’ll soon analyze your connected data for: “${prompt}”.`
+          : "Ask me about drops/spikes, Top keywords, or GBP trends. (Full AI coming in the next patch.)"
+    });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message || "Unexpected server error" });
+  }
+}
