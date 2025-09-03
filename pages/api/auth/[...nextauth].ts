@@ -8,7 +8,7 @@ const scopes = [
   "https://www.googleapis.com/auth/analytics.readonly",  // GA4
   "https://www.googleapis.com/auth/webmasters.readonly", // GSC
   "https://www.googleapis.com/auth/business.manage",     // GBP performance
-  "https://www.googleapis.com/auth/spreadsheets"         // (for Sheets history later)
+  "https://www.googleapis.com/auth/spreadsheets",         // (for Sheets history later)
   "https://www.googleapis.com/auth/drive.file"
 ].join(" ");
 
