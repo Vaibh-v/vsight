@@ -1,21 +1,24 @@
 // lib/google.ts
 
-// --- GA4: RunReport (Analytics Data API) ---
+// ---- GA4: Analytics Data API /properties/{id}:runReport ----
+export type GaRunReportRequest = {
+  dimensions?: { name: string }[];
+  metrics?: { name: string }[];
+  dateRanges: { startDate: string; endDate: string }[];
+  dimensionFilter?: any;
+  metricFilter?: any;
+  orderBys?: any[];
+  limit?: string;
+};
+
 export async function gaRunReport(
   accessToken: string,
   propertyId: string,
-  body: {
-    dimensions?: { name: string }[];
-    metrics?: { name: string }[];
-    dateRanges: { startDate: string; endDate: string }[];
-    dimensionFilter?: any;
-    metricFilter?: any;
-    orderBys?: any[];
-    limit?: string;
-    keepEmptyRows?: boolean;
-  }
+  body: GaRunReportRequest
 ) {
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
+    propertyId
+  )}:runReport`;
 
   const res = await fetch(url, {
     method: "POST",
@@ -27,23 +30,23 @@ export async function gaRunReport(
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GA4 RunReport ${res.status}: ${text}`);
+    const txt = await res.text();
+    throw new Error(`GA4 runReport failed ${res.status}: ${txt}`);
   }
   return res.json();
 }
 
-// --- Google Search Console: searchAnalytics.query ---
+// ---- GSC: Search Analytics query ----
 export type GscQueryBody = {
   startDate: string;
   endDate: string;
   dimensions?: string[];
   rowLimit?: number;
-  type?: "web" | "image" | "video" | "news" | "discover" | "googleNews";
-  dimensionFilterGroups?: any[];
-  aggregationType?: "auto" | "byProperty" | "byPage";
+  type?: "web" | "image" | "video" | "news";
+  dimensionFilterGroups?: any;
+  aggregationType?: any;
   startRow?: number;
-  dataState?: "final" | "all";
+  dataState?: "all" | "final";
 };
 
 export async function gscQuery(
@@ -77,44 +80,8 @@ export async function gscQuery(
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GSC query ${res.status}: ${text}`);
+    const txt = await res.text();
+    throw new Error(`GSC query ${res.status}: ${txt}`);
   }
   return res.json();
 }
-// --- GA4: runReport ---
-export type GaRunReportRequest = {
-  dimensions?: { name: string }[];
-  metrics?: { name: string }[];
-  dateRanges: { startDate: string; endDate: string }[];
-  dimensionFilter?: any;
-  metricFilter?: any;
-  orderBys?: any[];
-  limit?: string;
-};
-
-export async function gaRunReport(
-  accessToken: string,
-  propertyId: string,
-  body: GaRunReportRequest
-) {
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
-    propertyId
-  )}:runReport`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GA4 runReport failed ${res.status}: ${text}`);
-  }
-  return res.json();
-}
-\
