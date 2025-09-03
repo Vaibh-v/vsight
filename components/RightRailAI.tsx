@@ -1,51 +1,43 @@
-import { useEffect, useState } from "react";
+import React, { useState } from "react";
 
 export default function RightRailAI() {
-  const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<{ role: "user" | "ai"; content: string }[]>([
-    { role: "ai", content: "Hi! I can summarize your KPIs or explain changes. Try: Why did clicks drop last 7d?" }
-  ]);
-  const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState("");
+  const [a, setA] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   async function ask() {
-    if (!input.trim()) return;
-    const q = input.trim();
-    setMessages((m) => [...m, { role: "user", content: q }]);
-    setInput("");
-    setLoading(true);
+    setBusy(true);
+    setA(null);
     try {
-      const res = await fetch("/api/ai/ask", { method: "POST", body: JSON.stringify({ prompt: q }) });
-      const json = await res.json();
-      setMessages((m) => [...m, { role: "ai", content: json.text || "No answer." }]);
+      const r = await fetch("/api/ai/ask", { method: "POST", body: JSON.stringify({ query: q }) });
+      const j = await r.json();
+      setA(j.answer ?? "No answer.");
     } catch (e: any) {
-      setMessages((m) => [...m, { role: "ai", content: `Error: ${e.message}` }]);
+      setA(`Error: ${e.message || e}`);
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
   return (
-    <aside className="w-full md:w-80 border rounded p-3 h-fit sticky top-4">
+    <aside className="fixed right-4 top-24 w-[360px] max-h-[80vh] overflow-auto bg-white/90 backdrop-blur border rounded-xl shadow p-4 hidden xl:block">
       <div className="font-semibold mb-2">AI Insight</div>
-      <div className="space-y-2 max-h-80 overflow-auto text-sm">
-        {messages.map((m, i) => (
-          <div key={i} className={m.role === "ai" ? "text-gray-800" : "text-indigo-700"}>
-            <b>{m.role === "ai" ? "AI:" : "You:"}</b> {m.content}
-          </div>
-        ))}
-        {loading && <div className="text-xs text-gray-500">Thinking…</div>}
-      </div>
-      <div className="mt-2 flex gap-2">
-        <input
-          className="flex-1 border rounded px-2 py-1 text-sm"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask a question…"
-        />
-        <button className="px-3 py-1 rounded bg-black text-white text-sm" onClick={ask} disabled={loading}>
-          Ask
-        </button>
-      </div>
+      <textarea
+        className="w-full border rounded p-2 mb-2"
+        rows={4}
+        placeholder="Ask about your metrics…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      <button onClick={ask} disabled={busy} className="px-3 py-2 rounded bg-black text-white text-sm">
+        {busy ? "Thinking…" : "Ask"}
+      </button>
+      {a && <div className="mt-3 text-sm whitespace-pre-wrap">{a}</div>}
+      {!a && !q && (
+        <div className="text-xs text-neutral-600 mt-3">
+          Try: “What were the top 5 queries this month vs last?” or “Which pages lost clicks last 28 days?”
+        </div>
+      )}
     </aside>
   );
 }
