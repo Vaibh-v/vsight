@@ -280,3 +280,81 @@ export async function sheetsGet(
   }
   return res.json();
 }
+// ---------- Sheets: append rows to a sheet tab, auto-create tab if missing ----------
+export async function sheetsAppend(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetName: string,
+  rows: any[][]
+): Promise<any> {
+  async function appendOnce() {
+    const range = `${sheetName}!A1`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+      spreadsheetId
+    )}/values/${encodeURIComponent(
+      range
+    )}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ values: rows }),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`Sheets append failed ${res.status}: ${txt}`);
+    }
+    return res.json();
+  }
+
+  try {
+    return await appendOnce();
+  } catch (e: any) {
+    // If the sheet/tab doesn't exist yet, create it, then retry once.
+    const msg = String(e?.message || "");
+    const likelyMissingTab =
+      msg.includes("Unable to parse range") ||
+      msg.includes("Requested entity was not found") ||
+      msg.includes("Invalid value at 'data.range'") ||
+      msg.toLowerCase().includes("not found");
+
+    if (!likelyMissingTab) throw e;
+
+    // create the sheet tab
+    const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+      spreadsheetId
+    )}:batchUpdate`;
+
+    const createRes = await fetch(batchUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            addSheet: {
+              properties: {
+                title: sheetName,
+                gridProperties: { rowCount: 1000, columnCount: 26 },
+              },
+            },
+          },
+        ],
+      }),
+    });
+
+    if (!createRes.ok) {
+      const txt = await createRes.text();
+      throw new Error(`Sheets addSheet failed ${createRes.status}: ${txt}`);
+    }
+
+    // retry append
+    return await appendOnce();
+  }
+}
