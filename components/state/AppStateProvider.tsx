@@ -1,41 +1,51 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+// components/state/AppStateProvider.tsx
+import React, { createContext, useContext, useMemo, useState } from "react";
 
-type AppState = {
+export type DatePreset = "last28d" | "last90d";
+
+export type AppState = {
+  // global selections
+  datePreset: DatePreset;
   gaPropertyId?: string;
   gscSiteUrl?: string;
   gbpLocationName?: string;
-  dateRange: "last_28_days" | "last_90_days";
-  country: string;
-  setState: (s: Partial<AppState>) => void;
+
+  // room for future provider tokens / ids etc.
+  // semrushKey?: string;
+  // surferKey?: string;
+  // claritySiteId?: string;
 };
 
-const Ctx = createContext<AppState | null>(null);
-const KEY = "vsight:state";
-
-export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [state, set] = useState<AppState>({
-    dateRange: "last_28_days",
-    country: "USA",
-  } as AppState);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) set(JSON.parse(raw));
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(state));
-    } catch {}
-  }, [state]);
-
-  const setState = (s: Partial<AppState>) => set((prev) => ({ ...prev, ...s }));
-  return <Ctx.Provider value={{ ...state, setState }}>{children}</Ctx.Provider>;
+type Ctx = {
+  state: AppState;
+  setState: (patch: Partial<AppState> | ((prev: AppState) => Partial<AppState>)) => void;
 };
 
-export const useAppState = () => {
-  const ctx = useContext(Ctx);
-  if (!ctx) throw new Error("useAppState must be used within AppStateProvider");
+const AppStateCtx = createContext<Ctx | null>(null);
+
+const defaultState: AppState = {
+  datePreset: "last28d",
+  gaPropertyId: undefined,
+  gscSiteUrl: undefined,
+  gbpLocationName: undefined,
+};
+
+export function AppStateProvider({ children }: { children: React.ReactNode }) {
+  const [state, _set] = useState<AppState>(defaultState);
+
+  const setState: Ctx["setState"] = (patch) => {
+    _set((prev) => {
+      const diff = typeof patch === "function" ? patch(prev) : patch;
+      return { ...prev, ...diff };
+    });
+  };
+
+  const value = useMemo<Ctx>(() => ({ state, setState }), [state]);
+  return <AppStateCtx.Provider value={value}>{children}</AppStateCtx.Provider>;
+}
+
+export function useAppState(): Ctx {
+  const ctx = useContext(AppStateCtx);
+  if (!ctx) throw new Error("useAppState must be used within <AppStateProvider>");
   return ctx;
-};
+}
