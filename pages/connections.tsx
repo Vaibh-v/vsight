@@ -4,7 +4,10 @@ import { useAppState } from "../components/state/AppStateProvider";
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export default function ConnectionsPage() {
-  const { gaPropertyId, gscSiteUrl, gbpLocationName, setState } = useAppState();
+  const {
+  state: { gaPropertyId, gscSiteUrl, gbpLocationName },
+  setState,
+} = useAppState();
 
   const { data: ga, error: gaErr, isLoading: gaLoading } = useSWR("/api/google/ga/properties", fetcher);
   const { data: gsc, error: gscErr, isLoading: gscLoading } = useSWR("/api/google/gsc/sites", fetcher);
