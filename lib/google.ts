@@ -100,3 +100,85 @@ export async function gbpListLocations(accessToken: string) {
   }
   return out;
 }
+// ---------- Google Drive & Sheets (Settings / History) ----------
+
+async function gFetch<T>(url: string, accessToken: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+  });
+  const text = await res.text();
+  if (text.trim().startsWith("<")) {
+    throw new Error(
+      `Non-JSON response from Google. Likely missing API enablement or scopes. First bytes: ${text.slice(0, 120)}…`
+    );
+  }
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  return text ? (JSON.parse(text) as T) : ({} as T);
+}
+
+/** Ensure a spreadsheet exists by name; create if missing. Returns spreadsheetId. */
+export async function driveEnsureSpreadsheet(accessToken: string, spreadsheetName: string): Promise<string> {
+  // Try to find by name
+  const list = await gFetch<{ files?: Array<{ id: string; name: string }> }>(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+      `name='${spreadsheetName}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`
+    )}&fields=files(id,name)`,
+    accessToken
+  );
+  const existing = (list.files || [])[0];
+  if (existing?.id) return existing.id;
+
+  // Create if not found
+  const created = await gFetch<{ id: string }>(
+    "https://www.googleapis.com/drive/v3/files",
+    accessToken,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        name: spreadsheetName,
+        mimeType: "application/vnd.google-apps.spreadsheet",
+      }),
+    }
+  );
+  return created.id;
+}
+
+/** Sheets: read a range */
+export async function sheetsGet(
+  accessToken: string,
+  spreadsheetId: string,
+  rangeA1: string
+): Promise<{ values?: string[][] }> {
+  return gFetch<{ values?: string[][] }>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(rangeA1)}`,
+    accessToken
+  );
+}
+
+/** Sheets: append rows to a sheet (creates rows; sheet/tab must exist) */
+export async function sheetsAppend(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetName: string,
+  values: Array<Array<string | number>>
+): Promise<any> {
+  return gFetch<any>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(
+      `${sheetName}!A1`
+    )}:append?valueInputOption=RAW`,
+    accessToken,
+    {
+      method: "POST",
+      body: JSON.stringify({ values }),
+    }
+  );
+}
+
+/** Back-compat alias for older imports */
+export { driveEnsureSpreadsheet as driveFindOrCreateSpreadsheet };
+
