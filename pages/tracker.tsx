@@ -52,6 +52,18 @@ export default function OrganicTracker() {
       setSerpLoading(false);
     }
   };
+  export default function TrackerPage() {
+  return (
+    <main className="max-w-6xl mx-auto p-6 space-y-6">
+      <h1 className="text-2xl font-bold">Organic Tracker</h1>
+
+      {/* your existing “Top-10 Keywords” + “GBP Keywords” sections */}
+
+      {/* New: Custom keywords SERP checker */}
+      <CustomKeywordsPanel />
+    </main>
+  );
+}
 
   // shape tables
   const top10Rows = (gscTop?.data?.rows || []).map((r: any) => ({
