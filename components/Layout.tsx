@@ -45,3 +45,28 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+import Link from "next/link";
+import TopNavUser from "./TopNavUser";
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-screen">
+      <header className="border-b bg-white">
+        <div className="max-w-6xl mx-auto px-4 h-12 flex items-center justify-between">
+          <nav className="flex items-center gap-4 text-sm">
+            <Link href="/">VSight</Link>
+            <Link href="/connections">Connections</Link>
+            <Link href="/dashboard">Dashboard</Link>
+            <Link href="/tracker">Organic Tracker</Link>
+            <Link href="/ai">AI Insight</Link>
+          </nav>
+          <TopNavUser />
+        </div>
+      </header>
+      <main>{children}</main>
+      <footer className="max-w-6xl mx-auto px-4 py-8 text-xs text-gray-500">
+        © 2025 VSight &nbsp;·&nbsp; <Link href="/privacy">Privacy</Link> &nbsp;·&nbsp; <Link href="/terms">Terms</Link>
+      </footer>
+    </div>
+  );
+}
