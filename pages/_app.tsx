@@ -4,9 +4,9 @@ import "../styles/globals.css";
 import { AppStateProvider } from "../components/state/AppStateProvider";
 import Layout from "../components/Layout";
 
-export default function MyApp({ Component, pageProps }: AppProps) {
+export default function MyApp({ Component, pageProps }: AppProps & { pageProps: any }) {
   return (
-    <SessionProvider session={(pageProps as any).session}>
+    <SessionProvider session={pageProps.session}>
       <AppStateProvider>
         <Layout>
           <Component {...pageProps} />
