@@ -1,19 +1,25 @@
-// components/state/AppStateProvider.tsx
 import React, { createContext, useContext, useMemo, useState } from "react";
 
 export type DatePreset = "last28d" | "last90d";
+
+export type GbpLocation = {
+  name: string;        // e.g. "accounts/123456789/locations/987654321"
+  title?: string;      // e.g. "VSight HQ"
+};
 
 export type AppState = {
   // global selections
   datePreset: DatePreset;
   gaPropertyId?: string;
   gscSiteUrl?: string;
-  gbpLocationName?: string;
 
-  // filters
-  country: string; // "ALL" (no filter) or ISO code like "US", "IN"
+  // Country filter for GSC (ISO-3166-1 alpha-3 or "ALL")
+  country?: string;    // "ALL" | "USA" | "IND" | ...
 
-  // room for future provider tokens / ids etc.
+  // GBP selection (object, not just a string ID)
+  gbpLocation?: GbpLocation;
+
+  // room for future integrations
   // semrushKey?: string;
   // surferKey?: string;
   // claritySiteId?: string;
@@ -30,8 +36,8 @@ const defaultState: AppState = {
   datePreset: "last28d",
   gaPropertyId: undefined,
   gscSiteUrl: undefined,
-  gbpLocationName: undefined,
   country: "ALL",
+  gbpLocation: undefined,
 };
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
@@ -45,7 +51,6 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   };
 
   const value = useMemo<Ctx>(() => ({ state, setState }), [state]);
-
   return <AppStateCtx.Provider value={value}>{children}</AppStateCtx.Provider>;
 }
 
