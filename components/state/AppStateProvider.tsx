@@ -1,28 +1,22 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { createContext, useContext, useMemo, useState, useEffect } from "react";
 
-export type DatePreset = "last28d" | "last90d";
-
-export type GbpLocation = {
-  name: string;        // e.g. "accounts/123456789/locations/987654321"
-  title?: string;      // e.g. "VSight HQ"
-};
+export type DatePreset = "last28d" | "last60d" | "last90d" | "custom";
 
 export type AppState = {
-  // global selections
-  datePreset: DatePreset;
+  // Connections / selections
   gaPropertyId?: string;
   gscSiteUrl?: string;
+  gbpLocationName?: string;
 
-  // Country filter for GSC (ISO-3166-1 alpha-3 or "ALL")
-  country?: string;    // "ALL" | "USA" | "IND" | ...
+  // Date / region
+  datePreset: DatePreset;
+  startDate?: string; // ISO yyyy-mm-dd (when preset=custom)
+  endDate?: string;
+  country: string;    // ISO-3166 alpha-2 or "ALL"
+  region?: string;    // state/province optional (free text from dropdown)
 
-  // GBP selection (object, not just a string ID)
-  gbpLocation?: GbpLocation;
-
-  // room for future integrations
-  // semrushKey?: string;
-  // surferKey?: string;
-  // claritySiteId?: string;
+  // UI
+  aiPanelOpen: boolean;
 };
 
 type Ctx = {
@@ -32,16 +26,22 @@ type Ctx = {
 
 const AppStateCtx = createContext<Ctx | null>(null);
 
-const defaultState: AppState = {
+const DEFAULT_STATE: AppState = {
   datePreset: "last28d",
-  gaPropertyId: undefined,
-  gscSiteUrl: undefined,
   country: "ALL",
-  gbpLocation: undefined,
+  aiPanelOpen: true
 };
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
-  const [state, _set] = useState<AppState>(defaultState);
+  const [state, _set] = useState<AppState>(() => {
+    if (typeof window === "undefined") return DEFAULT_STATE;
+    try {
+      const raw = localStorage.getItem("vsight/appState");
+      return raw ? { ...DEFAULT_STATE, ...JSON.parse(raw) } : DEFAULT_STATE;
+    } catch {
+      return DEFAULT_STATE;
+    }
+  });
 
   const setState: Ctx["setState"] = (patch) => {
     _set((prev) => {
@@ -49,6 +49,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       return { ...prev, ...diff };
     });
   };
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("vsight/appState", JSON.stringify(state));
+    }
+  }, [state]);
 
   const value = useMemo<Ctx>(() => ({ state, setState }), [state]);
   return <AppStateCtx.Provider value={value}>{children}</AppStateCtx.Provider>;
