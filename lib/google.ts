@@ -1,5 +1,6 @@
 // lib/google.ts
 
+// Single helper for all Google REST calls
 async function gFetch<T>(url: string, accessToken: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -9,9 +10,10 @@ async function gFetch<T>(url: string, accessToken: string, init: RequestInit = {
       ...(init.headers || {}),
     },
   });
+
   const text = await res.text();
 
-  // Throw helpful error if Google returns HTML (consent/error page)
+  // If Google returns an HTML error/consent page, surface a useful error
   if (text.trim().startsWith("<")) {
     throw new Error(
       `Non-JSON response from Google. Likely missing API enablement or scopes. First bytes: ${text.slice(0, 120)}…`
@@ -22,12 +24,17 @@ async function gFetch<T>(url: string, accessToken: string, init: RequestInit = {
   return text ? (JSON.parse(text) as T) : ({} as T);
 }
 
-/** GA4: list properties via Admin API */
+/* =========================
+   GA4 (Admin + Data API)
+   ========================= */
+
+/** GA4: list properties via Admin API (account summaries) */
 export async function gaListProperties(accessToken: string) {
   const data = await gFetch<{ accountSummaries?: any[] }>(
     "https://analyticsadmin.googleapis.com/v1alpha/accountSummaries?pagesize=200",
     accessToken
   );
+
   const out: { propertyId: string; displayName: string }[] = [];
   for (const acc of data.accountSummaries || []) {
     for (const p of acc.propertySummaries || []) {
@@ -49,12 +56,17 @@ export async function gaRunReport(accessToken: string, propertyId: string, body:
   );
 }
 
+/* =========================
+   Google Search Console
+   ========================= */
+
 /** GSC: list sites */
 export async function gscSites(accessToken: string) {
   const data = await gFetch<{ siteEntry?: { siteUrl: string; permissionLevel: string }[] }>(
     "https://www.googleapis.com/webmasters/v3/sites",
     accessToken
   );
+  // Filter out unverified sites
   return (data.siteEntry || []).filter((s) => s.permissionLevel !== "siteUnverifiedUser");
 }
 
@@ -82,44 +94,35 @@ export async function gscTimeseriesClicks(
   });
 }
 
+/* =========================
+   Google Business Profile
+   ========================= */
+
 /** GBP: list locations (via Account Mgmt + Business Information APIs) */
 export async function gbpListLocations(accessToken: string) {
-  // 1) accounts
+  // 1) List accounts
   const accounts = await gFetch<{ accounts?: { name: string }[] }>(
     "https://mybusinessaccountmanagement.googleapis.com/v1/accounts",
     accessToken
   );
+
+  // 2) For each account, list locations
   const out: { name: string; title: string }[] = [];
   for (const acc of accounts.accounts || []) {
-    // 2) locations under each account
     const locs = await gFetch<{ locations?: { name: string; title: string }[] }>(
       `https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations?readMask=name,title`,
       accessToken
     );
-    for (const l of locs.locations || []) out.push({ name: l.name, title: l.title });
+    for (const l of locs.locations || []) {
+      out.push({ name: l.name, title: l.title });
+    }
   }
   return out;
 }
-// ---------- Google Drive & Sheets (Settings / History) ----------
 
-async function gFetch<T>(url: string, accessToken: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-      ...(init.headers || {}),
-    },
-  });
-  const text = await res.text();
-  if (text.trim().startsWith("<")) {
-    throw new Error(
-      `Non-JSON response from Google. Likely missing API enablement or scopes. First bytes: ${text.slice(0, 120)}…`
-    );
-  }
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text}`);
-  return text ? (JSON.parse(text) as T) : ({} as T);
-}
+/* =========================
+   Google Drive + Sheets
+   ========================= */
 
 /** Ensure a spreadsheet exists by name; create if missing. Returns spreadsheetId. */
 export async function driveEnsureSpreadsheet(accessToken: string, spreadsheetName: string): Promise<string> {
@@ -181,4 +184,3 @@ export async function sheetsAppend(
 
 /** Back-compat alias for older imports */
 export { driveEnsureSpreadsheet as driveFindOrCreateSpreadsheet };
-
