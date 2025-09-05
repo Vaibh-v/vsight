@@ -184,3 +184,46 @@ export async function sheetsAppend(
 
 /** Back-compat alias for older imports */
 export { driveEnsureSpreadsheet as driveFindOrCreateSpreadsheet };
+
+// --- GSC Top queries with position filter and country dimension ---
+export async function gscTopQueries(
+  accessToken: string,
+  {
+    siteUrl,
+    startDate,
+    endDate,
+    country,       // "ALL" or ISO-3166-1 alpha-2
+    rowLimit = 100,
+    maxPosition = 10,
+  }: { siteUrl: string; startDate: string; endDate: string; country: string; rowLimit?: number; maxPosition?: number; }
+) {
+  const dims: string[] = ["query"];
+  const filters: any[] = [];
+  if (country && country !== "ALL") {
+    dims.push("country");
+    filters.push({ dimension: "country", operator: "equals", expression: country.toLowerCase() });
+  }
+
+  const body: any = {
+    startDate, endDate,
+    dimensions: dims,
+    rowLimit: Math.min(rowLimit, 25000),
+    type: "web"
+  };
+  if (filters.length) body.dimensionFilter = { groupType: "and", filters };
+
+  const data = await gscQuery(accessToken, siteUrl, body);
+  // Filter by avg position <= maxPosition
+  const rows = (data.rows || []).filter((r: any) => (r.position ?? r.avgPosition ?? 999) <= maxPosition);
+  return { rows };
+}
+
+// --- GBP monthly keywords (past 3 months) ---
+export async function gbpKeywordsLast3M(accessToken: string, locationName: string) {
+  // My Business Performance API
+  // https://businessprofileperformance.googleapis.com/v1/locations/*/searchkeywords/impressions/monthly
+  const since = new Date(); since.setMonth(since.getMonth() - 3);
+  const url = `https://businessprofileperformance.googleapis.com/v1/${encodeURIComponent(locationName)}/searchkeywords/impressions/monthly?monthly_range.start_month.year=${since.getFullYear()}&monthly_range.start_month.month=${since.getMonth()+1}&monthly_range.end_month.year=${new Date().getFullYear()}&monthly_range.end_month.month=${new Date().getMonth()+1}`;
+  return gFetch<any>(url, accessToken);
+}
+
