@@ -1,17 +1,26 @@
+// pages/connections.tsx
 import useSWR from "swr";
 import { useAppState } from "../components/state/AppStateProvider";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export default function ConnectionsPage() {
-  const {
-  state: { gaPropertyId, gscSiteUrl, gbpLocationName },
-  setState,
-} = useAppState();
+  const { state, setState } = useAppState();
+  const { gaPropertyId, gscSiteUrl, gbpLocation } = state;
 
-  const { data: ga, error: gaErr, isLoading: gaLoading } = useSWR("/api/google/ga/properties", fetcher);
+  // API calls
+  const { data: ga,  error: gaErr,  isLoading: gaLoading  } = useSWR("/api/google/ga/properties", fetcher);
   const { data: gsc, error: gscErr, isLoading: gscLoading } = useSWR("/api/google/gsc/sites", fetcher);
   const { data: gbp, error: gbpErr, isLoading: gbpLoading } = useSWR("/api/gbp/locations", fetcher);
+  // If your GBP route actually lives under /api/google/gbp/locations, change the path above to match.
+
+  // Helpers to set selections
+  const onSelectGA = (value: string) => setState({ gaPropertyId: value || undefined });
+  const onSelectGSC = (value: string) => setState({ gscSiteUrl: value || undefined });
+  const onSelectGBP = (value: string) => {
+    const chosen = (gbp?.locations || []).find((l: any) => l.name === value);
+    setState({ gbpLocation: chosen ? { name: chosen.name, title: chosen.title } : undefined });
+  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 py-8">
@@ -22,10 +31,10 @@ export default function ConnectionsPage() {
         <div className="font-medium mb-2">Google Analytics 4</div>
         {gaErr && <p className="text-red-600 text-sm">GA error: {String(gaErr.message || gaErr.error || gaErr)}</p>}
         <select
-          disabled={gaLoading || gaErr}
+          disabled={gaLoading || !!gaErr}
           className="border rounded p-2 w-full"
           value={gaPropertyId || ""}
-          onChange={(e) => setState({ gaPropertyId: e.target.value })}
+          onChange={(e) => onSelectGA(e.target.value)}
         >
           <option value="">Select a property</option>
           {(ga?.properties || []).map((p: any) => (
@@ -41,10 +50,10 @@ export default function ConnectionsPage() {
         <div className="font-medium mb-2">Google Search Console</div>
         {gscErr && <p className="text-red-600 text-sm">GSC error: {String(gscErr.message || gscErr.error || gscErr)}</p>}
         <select
-          disabled={gscLoading || gscErr}
+          disabled={gscLoading || !!gscErr}
           className="border rounded p-2 w-full"
           value={gscSiteUrl || ""}
-          onChange={(e) => setState({ gscSiteUrl: e.target.value })}
+          onChange={(e) => onSelectGSC(e.target.value)}
         >
           <option value="">Select a site</option>
           {(gsc?.sites || []).map((s: any) => (
@@ -64,10 +73,10 @@ export default function ConnectionsPage() {
           </p>
         )}
         <select
-          disabled={gbpLoading || gbpErr}
+          disabled={gbpLoading || !!gbpErr}
           className="border rounded p-2 w-full"
-          value={gbpLocationName || ""}
-          onChange={(e) => setState({ gbpLocationName: e.target.value })}
+          value={gbpLocation?.name || ""}
+          onChange={(e) => onSelectGBP(e.target.value)}
         >
           <option value="">Select a location</option>
           {(gbp?.locations || []).map((l: any) => (
