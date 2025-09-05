@@ -1,57 +1,147 @@
-// components/state/AppStateProvider.tsx
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { useEffect, useMemo } from "react";
+import useSWR from "swr";
+import { useAppState } from "../components/state/AppStateProvider";
+import Kpi from "../components/Kpi";
+import TimeSeries from "../components/charts/TimeSeries";
+import { postJSON, lastNDays } from "../lib/http";
 
-export type DatePreset = "last28d" | "last90d";
+export default function Dashboard() {
+  const { state, setState } = useAppState();
 
-export type AppState = {
-  // global selections
-  datePreset: DatePreset;
-  gaPropertyId?: string;
-  gscSiteUrl?: string;
+  // Date window
+  const days = state.datePreset === "last28d" ? 28 : 90;
+  const { startDate, endDate } = lastNDays(days);
 
-  // GBP location as an object (matches your dashboard.tsx usage)
-  gbpLocation?: { name: string; title?: string };
+  // --- GSC Top queries (for quick KPIs) ---
+  const gscKey = state.gscSiteUrl
+    ? ["gsc-top", state.gscSiteUrl, startDate, endDate, state.country]
+    : null;
 
-  // country filter used by dashboard.tsx (defaults to "ALL")
-  country: string;
+  const { data: gscTop } = useSWR(gscKey, ([, site, s, e, country]) =>
+    postJSON("/api/google/gsc/top-queries", {
+      siteUrl: site,
+      startDate: s,
+      endDate: e,
+      country,
+      rowLimit: 100,
+    })
+  );
 
-  // room for future provider tokens / ids
-  // semrushKey?: string;
-  // surferKey?: string;
-  // claritySiteId?: string;
-};
+  // --- GBP daily metrics (if a location is selected) ---
+  const gbpKey = state.gbpLocation
+    ? [
+        "gbp-daily",
+        state.gbpLocation.name,
+        startDate,
+        endDate,
+        "BUSINESS_INTERACTIONS_WEBSITE_CLICKS,BUSINESS_INTERACTIONS_PHONE_CLICKS",
+      ]
+    : null;
 
-type Ctx = {
-  state: AppState;
-  setState: (patch: Partial<AppState> | ((prev: AppState) => Partial<AppState>)) => void;
-};
+  const { data: gbpDaily } = useSWR(gbpKey, ([, loc, s, e, metrics]) =>
+    fetch(
+      `/api/google/gbp/daily?location=${encodeURIComponent(
+        loc
+      )}&startDate=${s}&endDate=${e}&metrics=${encodeURIComponent(metrics)}`
+    ).then((r) => r.json())
+  );
 
-const AppStateCtx = createContext<Ctx | null>(null);
+  // --- quick numbers from GSC ---
+  const gscClicks = useMemo(() => {
+    const rows = gscTop?.rows || [];
+    return rows.reduce((acc: number, r: any) => acc + (r.clicks || 0), 0);
+  }, [gscTop]);
 
-const defaultState: AppState = {
-  datePreset: "last28d",
-  gaPropertyId: undefined,
-  gscSiteUrl: undefined,
-  gbpLocation: undefined,
-  country: "ALL",
-};
+  const gscImpr = useMemo(() => {
+    const rows = gscTop?.rows || [];
+    return rows.reduce((acc: number, r: any) => acc + (r.impressions || 0), 0);
+  }, [gscTop]);
 
-export function AppStateProvider({ children }: { children: React.ReactNode }) {
-  const [state, _set] = useState<AppState>(defaultState);
+  // GBP chart points
+  const gbpSeries = useMemo(() => {
+    if (!gbpDaily?.timeSeries || !gbpDaily.timeSeries.length) return [];
+    const toX = (d: any) => {
+      const s = `${d.date.year}-${String(d.date.month).padStart(2, "0")}-${String(
+        d.date.day
+      ).padStart(2, "0")}`;
+      return new Date(s).getTime();
+    };
+    return gbpDaily.timeSeries.map((t: any) => ({
+      name: t.dimensions?.[0]?.metric || "metric",
+      points: (t.timeSeries || t.dailyMetrics || t.days || t.samples || t.points || t).map(
+        (p: any) => ({
+          x: toX(p),
+          y: p.value ?? p.values?.[0]?.value ?? 0,
+        })
+      ),
+    }));
+  }, [gbpDaily]);
 
-  const setState: Ctx["setState"] = (patch) => {
-    _set((prev) => {
-      const diff = typeof patch === "function" ? patch(prev) : patch;
-      return { ...prev, ...diff };
-    });
-  };
+  // ensure country has a default
+  useEffect(() => {
+    if (!state.country) setState({ country: "ALL" });
+  }, [state.country, setState]);
 
-  const value = useMemo<Ctx>(() => ({ state, setState }), [state]);
-  return <AppStateCtx.Provider value={value}>{children}</AppStateCtx.Provider>;
-}
+  return (
+    <main className="max-w-6xl mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <div className="flex gap-2">
+          <select
+            className="border rounded px-3 py-1"
+            value={state.datePreset}
+            onChange={(e) => setState({ datePreset: e.target.value as any })}
+          >
+            <option value="last28d">Last 28 days</option>
+            <option value="last90d">Last 90 days</option>
+          </select>
 
-export function useAppState(): Ctx {
-  const ctx = useContext(AppStateCtx);
-  if (!ctx) throw new Error("useAppState must be used within <AppStateProvider>");
-  return ctx;
+          <select
+            className="border rounded px-3 py-1"
+            value={state.country || "ALL"}
+            onChange={(e) => setState({ country: e.target.value })}
+          >
+            <option value="ALL">All countries</option>
+            <option value="USA">USA</option>
+            <option value="IND">India</option>
+            <option value="GBR">UK</option>
+            <option value="AUS">Australia</option>
+          </select>
+        </div>
+      </div>
+
+      {/* KPI tiles */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Kpi label="GSC Clicks" value={gscClicks || 0} />
+        <Kpi label="GSC Impressions" value={gscImpr || 0} />
+        <Kpi
+          label="GBP Website Clicks"
+          value={gbpSeries[0]?.points?.reduce((a: number, p: any) => a + p.y, 0) || 0}
+        />
+        <Kpi
+          label="GBP Phone Clicks"
+          value={gbpSeries[1]?.points?.reduce((a: number, p: any) => a + p.y, 0) || 0}
+        />
+      </div>
+
+      {/* GBP Trend (if selected) */}
+      {state.gbpLocation ? (
+        <section className="border rounded p-4">
+          <div className="font-semibold mb-2">
+            GBP Daily (Website & Phone) — {state.gbpLocation.title || state.gbpLocation.name}
+          </div>
+          {gbpSeries.length ? (
+            <TimeSeries series={gbpSeries} height={220} />
+          ) : (
+            <div className="text-sm text-gray-500">No GBP data for the selected window.</div>
+          )}
+        </section>
+      ) : (
+        <section className="border rounded p-4 text-sm text-gray-500">
+          Select a GBP location in <span className="font-medium">Connections</span> to see GBP
+          trends here.
+        </section>
+      )}
+    </main>
+  );
 }
