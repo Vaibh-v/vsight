@@ -10,6 +10,9 @@ export type AppState = {
   gscSiteUrl?: string;
   gbpLocationName?: string;
 
+  // filters
+  country: string; // "ALL" (no filter) or ISO code like "US", "IN"
+
   // room for future provider tokens / ids etc.
   // semrushKey?: string;
   // surferKey?: string;
@@ -28,6 +31,7 @@ const defaultState: AppState = {
   gaPropertyId: undefined,
   gscSiteUrl: undefined,
   gbpLocationName: undefined,
+  country: "ALL",
 };
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
@@ -41,6 +45,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   };
 
   const value = useMemo<Ctx>(() => ({ state, setState }), [state]);
+
   return <AppStateCtx.Provider value={value}>{children}</AppStateCtx.Provider>;
 }
 
