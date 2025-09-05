@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo } from "react";
+// pages/dashboard.tsx
+import { useEffect, useMemo } from "react";
 import useSWR from "swr";
 import { useAppState } from "../components/state/AppStateProvider";
 import Kpi from "../components/Kpi";
@@ -14,7 +15,7 @@ export default function Dashboard() {
 
   // --- GSC Top queries (for quick KPIs) ---
   const gscKey = state.gscSiteUrl
-    ? ["gsc-top", state.gscSiteUrl, startDate, endDate, state.country]
+    ? ["gsc-top", state.gscSiteUrl, startDate, endDate, state.country || "ALL"]
     : null;
 
   const { data: gscTop } = useSWR(gscKey, ([, site, s, e, country]) =>
@@ -23,15 +24,15 @@ export default function Dashboard() {
       startDate: s,
       endDate: e,
       country,
-      rowLimit: 100,
+      rowLimit: 100
     })
   );
 
   // --- GBP daily metrics (if a location is selected) ---
-  const gbpKey = state.gbpLocation
+  const gbpKey = state.gbpLocationName
     ? [
         "gbp-daily",
-        state.gbpLocation.name,
+        state.gbpLocationName,
         startDate,
         endDate,
         "BUSINESS_INTERACTIONS_WEBSITE_CLICKS,BUSINESS_INTERACTIONS_PHONE_CLICKS",
@@ -57,27 +58,22 @@ export default function Dashboard() {
     return rows.reduce((acc: number, r: any) => acc + (r.impressions || 0), 0);
   }, [gscTop]);
 
-  // GBP chart points
+  // GBP chart points (make this tolerant to shape differences)
   const gbpSeries = useMemo(() => {
     if (!gbpDaily?.timeSeries || !gbpDaily.timeSeries.length) return [];
     const toX = (d: any) => {
-      const s = `${d.date.year}-${String(d.date.month).padStart(2, "0")}-${String(
-        d.date.day
-      ).padStart(2, "0")}`;
+      const s = `${d.date.year}-${String(d.date.month).padStart(2, "0")}-${String(d.date.day).padStart(2, "0")}`;
       return new Date(s).getTime();
     };
     return gbpDaily.timeSeries.map((t: any) => ({
       name: t.dimensions?.[0]?.metric || "metric",
-      points: (t.timeSeries || t.dailyMetrics || t.days || t.samples || t.points || t).map(
-        (p: any) => ({
-          x: toX(p),
-          y: p.value ?? p.values?.[0]?.value ?? 0,
-        })
-      ),
+      points: (t.timeSeries || t.dailyMetrics || t.points || []).map((p: any) => ({
+        x: toX(p),
+        y: p.value ?? p.values?.[0]?.value ?? 0
+      }))
     }));
   }, [gbpDaily]);
 
-  // ensure country has a default
   useEffect(() => {
     if (!state.country) setState({ country: "ALL" });
   }, [state.country, setState]);
@@ -95,7 +91,6 @@ export default function Dashboard() {
             <option value="last28d">Last 28 days</option>
             <option value="last90d">Last 90 days</option>
           </select>
-
           <select
             className="border rounded px-3 py-1"
             value={state.country || "ALL"}
@@ -114,21 +109,15 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Kpi label="GSC Clicks" value={gscClicks || 0} />
         <Kpi label="GSC Impressions" value={gscImpr || 0} />
-        <Kpi
-          label="GBP Website Clicks"
-          value={gbpSeries[0]?.points?.reduce((a: number, p: any) => a + p.y, 0) || 0}
-        />
-        <Kpi
-          label="GBP Phone Clicks"
-          value={gbpSeries[1]?.points?.reduce((a: number, p: any) => a + p.y, 0) || 0}
-        />
+        <Kpi label="GBP Website Clicks" value={gbpSeries[0]?.points?.reduce((a: number, p: any) => a + p.y, 0) || 0} />
+        <Kpi label="GBP Phone Clicks" value={gbpSeries[1]?.points?.reduce((a: number, p: any) => a + p.y, 0) || 0} />
       </div>
 
       {/* GBP Trend (if selected) */}
-      {state.gbpLocation ? (
+      {state.gbpLocationName ? (
         <section className="border rounded p-4">
           <div className="font-semibold mb-2">
-            GBP Daily (Website & Phone) — {state.gbpLocation.title || state.gbpLocation.name}
+            GBP Daily (Website & Phone) — {state.gbpLocationName}
           </div>
           {gbpSeries.length ? (
             <TimeSeries series={gbpSeries} height={220} />
@@ -138,8 +127,7 @@ export default function Dashboard() {
         </section>
       ) : (
         <section className="border rounded p-4 text-sm text-gray-500">
-          Select a GBP location in <span className="font-medium">Connections</span> to see GBP
-          trends here.
+          Select a GBP location in <span className="font-medium">Connections</span> to see GBP trends here.
         </section>
       )}
     </main>
