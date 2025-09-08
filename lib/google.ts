@@ -29,12 +29,12 @@ async function gFetch<T>(url: string, accessToken: string, init: RequestInit = {
    ========================= */
 
 /** GA4: list properties via Admin API (account summaries) */
+// lib/google.ts (replace just this function)
 export async function gaListProperties(accessToken: string) {
   const data = await gFetch<{ accountSummaries?: any[] }>(
-    "https://analyticsadmin.googleapis.com/v1alpha/accountSummaries?pagesize=200",
+    "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pagesize=200",
     accessToken
   );
-
   const out: { propertyId: string; displayName: string }[] = [];
   for (const acc of data.accountSummaries || []) {
     for (const p of acc.propertySummaries || []) {
