@@ -2,33 +2,20 @@ import { useSession, signIn, signOut } from "next-auth/react";
 
 export default function TopNavUser() {
   const { data: session, status } = useSession();
-  const loading = status === "loading";
-
-  if (loading) {
-    return <span className="text-sm text-gray-500">…</span>;
-  }
-
-  if (!session) {
+  if (status === "loading") return <div className="text-sm text-gray-500">…</div>;
+  if (!session)
     return (
       <button
         onClick={() => signIn("google")}
-        className="text-sm px-3 py-1 rounded border hover:bg-gray-50"
-        aria-label="Sign in with Google"
+        className="text-sm border rounded px-3 py-1 hover:bg-gray-50"
       >
         Sign in
       </button>
     );
-  }
-
-  const email = session.user?.email || "Signed in";
   return (
     <div className="flex items-center gap-3">
-      <span className="text-sm text-gray-600">{email}</span>
-      <button
-        onClick={() => signOut()}
-        className="text-sm px-3 py-1 rounded border hover:bg-gray-50"
-        aria-label="Sign out"
-      >
+      <span className="text-sm text-gray-700">{session.user?.email}</span>
+      <button onClick={() => signOut()} className="text-sm border rounded px-3 py-1 hover:bg-gray-50">
         Sign out
       </button>
     </div>
