@@ -1,3 +1,4 @@
+// pages/api/gbp/locations.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
 import { gbpListLocations } from "../../../lib/google";
@@ -9,6 +10,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const locations = await gbpListLocations(String(token.access_token));
     res.status(200).json({ locations });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message || "GBP locations failed" });
   }
 }
