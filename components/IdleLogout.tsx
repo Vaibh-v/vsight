@@ -1,23 +1,24 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { signOut } from "next-auth/react";
 
-export default function IdleLogout({ minutes = 30 }: { minutes?: number }) {
-  const timer = useRef<NodeJS.Timeout | null>(null);
+export default function IdleLogout({ minutes = 60 }: { minutes?: number }) {
   useEffect(() => {
+    const ms = minutes * 60 * 1000;
+    let timer: any;
+
     const reset = () => {
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => signOut(), minutes * 60 * 1000);
+      clearTimeout(timer);
+      timer = setTimeout(() => signOut({ callbackUrl: "/" }), ms);
     };
-    ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach((e) =>
-      window.addEventListener(e, reset, { passive: true })
-    );
+
+    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    events.forEach((e) => window.addEventListener(e, reset));
     reset();
     return () => {
-      ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach((e) =>
-        window.removeEventListener(e, reset)
-      );
-      if (timer.current) clearTimeout(timer.current);
+      clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, reset));
     };
   }, [minutes]);
+
   return null;
 }
