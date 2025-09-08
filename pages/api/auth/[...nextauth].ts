@@ -1,3 +1,4 @@
+// pages/api/auth/[...nextauth].ts
 import NextAuth, { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 
@@ -5,12 +6,11 @@ const scopes = [
   "openid",
   "email",
   "profile",
-  "https://www.googleapis.com/auth/analytics.readonly",  // GA4
-  "https://www.googleapis.com/auth/webmasters.readonly", // GSC
-  "https://www.googleapis.com/auth/business.manage",     // GBP performance
-  "https://www.googleapis.com/auth/businessprofileperformance",
-  "https://www.googleapis.com/auth/spreadsheets",         // (for Sheets history later)
-  "https://www.googleapis.com/auth/drive.file"
+  "https://www.googleapis.com/auth/analytics.readonly",   // GA4 Data API
+  "https://www.googleapis.com/auth/webmasters.readonly",  // Search Console
+  "https://www.googleapis.com/auth/business.manage",      // GBP (incl. performance)
+  "https://www.googleapis.com/auth/spreadsheets",         // Sheets
+  "https://www.googleapis.com/auth/drive.file"            // Drive (create/edit app files)
 ].join(" ");
 
 export const authOptions: NextAuthOptions = {
@@ -22,7 +22,7 @@ export const authOptions: NextAuthOptions = {
         params: {
           scope: scopes,
           access_type: "offline",
-          prompt: "consent"
+          prompt: "consent" // force refresh new scopes each login
         }
       }
     })
