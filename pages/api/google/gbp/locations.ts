@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
-import { gbpKeywordsLast3M } from "../../../../lib/google";
+import { gbpKeywordsLast3M } from "../../../lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
