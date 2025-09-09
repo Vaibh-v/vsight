@@ -23,6 +23,59 @@ async function gFetch<T>(url: string, accessToken: string, init: RequestInit = {
 
   return text ? (JSON.parse(text) as T) : ({} as T);
 }
+// --- Drive & Sheets helpers used by /api/settings/get ---
+
+/**
+ * Find a spreadsheet by title in Drive; if not found, create it via Sheets API.
+ * Requires scopes:
+ *   - https://www.googleapis.com/auth/drive.file  (or broader drive scope)
+ *   - https://www.googleapis.com/auth/spreadsheets
+ */
+export async function driveFindOrCreateSpreadsheet(accessToken: string, title: string): Promise<string> {
+  // 1) Try to find an existing spreadsheet with the same name
+  const query = encodeURIComponent(
+    `mimeType='application/vnd.google-apps.spreadsheet' and name='${title.replace(/'/g, "\\'")}' and trashed=false`
+  );
+
+  const search = await gFetch<{ files?: { id: string; name: string }[] }>(
+    `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name)&pageSize=10`,
+    accessToken
+  );
+
+  const existing = (search.files || [])[0];
+  if (existing?.id) return existing.id;
+
+  // 2) Create a new spreadsheet
+  const created = await gFetch<{ spreadsheetId: string }>(
+    "https://sheets.googleapis.com/v4/spreadsheets",
+    accessToken,
+    {
+      method: "POST",
+      body: JSON.stringify({ properties: { title } }),
+    }
+  );
+
+  if (!created?.spreadsheetId) {
+    throw new Error("Failed to create spreadsheet");
+  }
+  return created.spreadsheetId;
+}
+
+/**
+ * Read a value range from an existing spreadsheet.
+ * Example range: "Settings!A:C"
+ * Requires: https://www.googleapis.com/auth/spreadsheets.readonly  (or spreadsheets)
+ */
+export async function sheetsGet(
+  accessToken: string,
+  spreadsheetId: string,
+  range: string
+): Promise<{ range?: string; majorDimension?: string; values?: any[][] }> {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+    spreadsheetId
+  )}/values/${encodeURIComponent(range)}`;
+  return gFetch(url, accessToken);
+}
 
 /** ---------- GA4 (Admin + Data APIs) ---------- **/
 
