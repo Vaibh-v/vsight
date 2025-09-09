@@ -92,3 +92,39 @@ export async function gbpListLocations(accessToken: string) {
   }
   return out;
 }
+// --- Add this to lib/google.ts ---
+
+/** GSC: clicks timeseries (optionally filter by country code, e.g. "USA", "IND", "GBR") */
+export async function gscTimeseriesClicks(
+  accessToken: string,
+  siteUrl: string,
+  startDate: string,
+  endDate: string,
+  country?: string
+) {
+  const body: any = {
+    startDate,
+    endDate,
+    dimensions: ["date"],
+    rowLimit: 25000,
+    type: "web",
+  };
+
+  // If a country is provided, add a dimension filter
+  if (country && country !== "ALL") {
+    body.dimensionFilterGroups = [
+      {
+        groupType: "and",
+        filters: [
+          {
+            dimension: "country",
+            operator: "equals",
+            expression: country,
+          },
+        ],
+      },
+    ];
+  }
+
+  return gscQuery(accessToken, siteUrl, body);
+}
