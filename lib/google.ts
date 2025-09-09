@@ -1,229 +1,154 @@
 // lib/google.ts
 
-// Single helper for all Google REST calls
-async function gFetch<T>(url: string, accessToken: string, init: RequestInit = {}): Promise<T> {
+// Small helper for authenticated calls to Google APIs
+async function gFetch<T>(
+  url: string,
+  accessToken: string,
+  init: RequestInit = {}
+): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
       ...(init.headers || {}),
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
     },
   });
-
-  const text = await res.text();
-
-  // If Google returns an HTML error/consent page, surface a useful error
-  if (text.trim().startsWith("<")) {
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
     throw new Error(
-      `Non-JSON response from Google. Likely missing API enablement or scopes. First bytes: ${text.slice(0, 120)}…`
+      `Google API ${res.status} ${res.statusText} for ${url} :: ${text}`
     );
   }
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text}`);
-
-  return text ? (JSON.parse(text) as T) : ({} as T);
+  return (await res.json()) as T;
 }
 
-/* =========================
-   GA4 (Admin + Data API)
-   ========================= */
-
-/** GA4: list properties via Admin API (account summaries) */
-// lib/google.ts (replace just this function)
-export async function gaListProperties(accessToken: string) {
-  const data = await gFetch<{ accountSummaries?: any[] }>(
-    "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pagesize=200",
+/**
+ * GA4 — list properties the user can access (flattened from account summaries)
+ * Needs scope: https://www.googleapis.com/auth/analytics.readonly
+ */
+export async function gaListProperties(
+  accessToken: string
+): Promise<{ propertyId: string; displayName: string }[]> {
+  type Summaries = {
+    accountSummaries?: Array<{
+      propertySummaries?: Array<{ property?: string; displayName?: string }>;
+    }>;
+  };
+  const data = await gFetch<Summaries>(
+    "https://analyticsadmin.googleapis.com/v1beta/accountSummaries",
     accessToken
   );
   const out: { propertyId: string; displayName: string }[] = [];
-  for (const acc of data.accountSummaries || []) {
-    for (const p of acc.propertySummaries || []) {
-      out.push({
-        propertyId: String(p.property).split("/")[1],
-        displayName: `${acc.displayName} — ${p.displayName}`,
-      });
+  for (const acct of data.accountSummaries || []) {
+    for (const p of acct.propertySummaries || []) {
+      if (p.property) {
+        const id = p.property.replace("properties/", "");
+        out.push({ propertyId: id, displayName: p.displayName || id });
+      }
     }
   }
   return out;
 }
 
-/** GA4: runReport (Analytics Data API) */
-export async function gaRunReport(accessToken: string, propertyId: string, body: any) {
-  return gFetch<any>(
-    `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
-    accessToken,
-    { method: "POST", body: JSON.stringify(body) }
-  );
-}
-
-/* =========================
-   Google Search Console
-   ========================= */
-
-/** GSC: list sites */
-export async function gscSites(accessToken: string) {
-  const data = await gFetch<{ siteEntry?: { siteUrl: string; permissionLevel: string }[] }>(
-    "https://www.googleapis.com/webmasters/v3/sites",
-    accessToken
-  );
-  // Filter out unverified sites
-  return (data.siteEntry || []).filter((s) => s.permissionLevel !== "siteUnverifiedUser");
-}
-
-/** GSC: generic query */
-export async function gscQuery(accessToken: string, siteUrl: string, body: any) {
-  const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
-    siteUrl
-  )}/searchAnalytics/query`;
-  return gFetch<any>(url, accessToken, { method: "POST", body: JSON.stringify(body) });
-}
-
-/** GSC: clicks time-series */
-export async function gscTimeseriesClicks(
+/**
+ * GA4 — runReport
+ * POST https://analyticsdata.googleapis.com/v1beta/properties/{propertyId}:runReport
+ * Body is the standard RunReportRequest.
+ * Needs scope: https://www.googleapis.com/auth/analytics.readonly
+ */
+export async function gaRunReport<T = any>(
   accessToken: string,
-  siteUrl: string,
-  startDate: string,
-  endDate: string
-) {
-  return gscQuery(accessToken, siteUrl, {
-    startDate,
-    endDate,
-    dimensions: ["date"],
-    rowLimit: 25000,
-    type: "web",
+  propertyId: string,
+  body: any
+): Promise<T> {
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
+    propertyId
+  )}:runReport`;
+  return gFetch<T>(url, accessToken, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 
-/* =========================
-   Google Business Profile
-   ========================= */
-
-/** GBP: list locations (via Account Mgmt + Business Information APIs) */
-export async function gbpListLocations(accessToken: string) {
-  // 1) List accounts
-  const accounts = await gFetch<{ accounts?: { name: string }[] }>(
-    "https://mybusinessaccountmanagement.googleapis.com/v1/accounts",
-    accessToken
-  );
-
-  // 2) For each account, list locations
-  const out: { name: string; title: string }[] = [];
-  for (const acc of accounts.accounts || []) {
-    const locs = await gFetch<{ locations?: { name: string; title: string }[] }>(
-      `https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations?readMask=name,title`,
-      accessToken
-    );
-    for (const l of locs.locations || []) {
-      out.push({ name: l.name, title: l.title });
-    }
+/**
+ * GSC — Search Analytics Query
+ * POST https://searchconsole.googleapis.com/webmasters/v3/sites/{siteUrl}/searchAnalytics/query
+ * Needs scope: https://www.googleapis.com/auth/webmasters.readonly
+ */
+export async function gscQuery<T = any>(
+  accessToken: string,
+  siteUrl: string,
+  body: {
+    startDate: string;
+    endDate: string;
+    dimensions?: string[];
+    rowLimit?: number;
+    type?: "web" | "image" | "video" | "news" | "discover" | "googleNews";
+    dimensionFilterGroups?: any[];
+    aggregationType?: string;
+    searchType?: string; // alias used by some samples; not required
+    country?: string; // we let caller pass a dimension filter for country if needed
   }
-  return out;
+): Promise<T> {
+  const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
+    siteUrl
+  )}/searchAnalytics/query`;
+  return gFetch<T>(url, accessToken, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
-/* =========================
-   Google Drive + Sheets
-   ========================= */
-
-/** Ensure a spreadsheet exists by name; create if missing. Returns spreadsheetId. */
-export async function driveEnsureSpreadsheet(accessToken: string, spreadsheetName: string): Promise<string> {
-  // Try to find by name
-  const list = await gFetch<{ files?: Array<{ id: string; name: string }> }>(
-    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-      `name='${spreadsheetName}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`
-    )}&fields=files(id,name)`,
-    accessToken
-  );
-  const existing = (list.files || [])[0];
-  if (existing?.id) return existing.id;
-
-  // Create if not found
-  const created = await gFetch<{ id: string }>(
-    "https://www.googleapis.com/drive/v3/files",
-    accessToken,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        name: spreadsheetName,
-        mimeType: "application/vnd.google-apps.spreadsheet",
-      }),
-    }
-  );
-  return created.id;
+/**
+ * GBP — list locations
+ * GET https://mybusinessbusinessinformation.googleapis.com/v1/accounts/-/locations?pageSize=100
+ * Needs scope: https://www.googleapis.com/auth/business.manage
+ */
+export async function gbpListLocations<T = any>(
+  accessToken: string
+): Promise<T> {
+  const url =
+    "https://mybusinessbusinessinformation.googleapis.com/v1/accounts/-/locations?pageSize=100";
+  return gFetch<T>(url, accessToken);
 }
 
-/** Sheets: read a range */
-export async function sheetsGet(
+/**
+ * GBP — daily metrics (website clicks, phone calls, etc.)
+ * POST https://businessprofileperformance.googleapis.com/v1/{locationName}/dailyMetrics:search
+ * Body example:
+ * {
+ *   "dailyMetricAggregations": ["AGGREGATED_DAILY_METRICS"],
+ *   "metricDimentions": ["BUSINESS_INTERACTIONS_WEBSITE_CLICKS"],
+ *   "timeRange": {"startTime": "2024-06-01T00:00:00Z", "endTime": "2024-06-30T00:00:00Z"}
+ * }
+ * Needs scope: https://www.googleapis.com/auth/business.manage
+ */
+export async function gbpDailyMetrics<T = any>(
   accessToken: string,
-  spreadsheetId: string,
-  rangeA1: string
-): Promise<{ values?: string[][] }> {
-  return gFetch<{ values?: string[][] }>(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(rangeA1)}`,
-    accessToken
-  );
-}
-
-/** Sheets: append rows to a sheet (creates rows; sheet/tab must exist) */
-export async function sheetsAppend(
-  accessToken: string,
-  spreadsheetId: string,
-  sheetName: string,
-  values: Array<Array<string | number>>
-): Promise<any> {
-  return gFetch<any>(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(
-      `${sheetName}!A1`
-    )}:append?valueInputOption=RAW`,
-    accessToken,
-    {
-      method: "POST",
-      body: JSON.stringify({ values }),
-    }
-  );
-}
-
-/** Back-compat alias for older imports */
-export { driveEnsureSpreadsheet as driveFindOrCreateSpreadsheet };
-
-// --- GSC Top queries with position filter and country dimension ---
-export async function gscTopQueries(
-  accessToken: string,
-  {
-    siteUrl,
-    startDate,
-    endDate,
-    country,       // "ALL" or ISO-3166-1 alpha-2
-    rowLimit = 100,
-    maxPosition = 10,
-  }: { siteUrl: string; startDate: string; endDate: string; country: string; rowLimit?: number; maxPosition?: number; }
-) {
-  const dims: string[] = ["query"];
-  const filters: any[] = [];
-  if (country && country !== "ALL") {
-    dims.push("country");
-    filters.push({ dimension: "country", operator: "equals", expression: country.toLowerCase() });
+  locationName: string, // e.g. "locations/12345678901234567890"
+  opts: {
+    metrics: string[]; // e.g. ["BUSINESS_INTERACTIONS_WEBSITE_CLICKS","BUSINESS_INTERACTIONS_PHONE_CLICKS"]
+    startDate: string; // "YYYY-MM-DD"
+    endDate: string; // "YYYY-MM-DD"
   }
+): Promise<T> {
+  const url = `https://businessprofileperformance.googleapis.com/v1/${encodeURIComponent(
+    locationName
+  )}/dailyMetrics:search`;
 
-  const body: any = {
-    startDate, endDate,
-    dimensions: dims,
-    rowLimit: Math.min(rowLimit, 25000),
-    type: "web"
+  // Build a simple time range at midnight UTC
+  const startTime = `${opts.startDate}T00:00:00Z`;
+  const endTime = `${opts.endDate}T00:00:00Z`;
+
+  const body = {
+    dailyMetricAggregations: ["AGGREGATED_DAILY_METRICS"],
+    metricDimentions: opts.metrics, // (note GBP uses this misspelling in some docs; API accepts both)
+    timeRange: { startTime, endTime },
   };
-  if (filters.length) body.dimensionFilter = { groupType: "and", filters };
 
-  const data = await gscQuery(accessToken, siteUrl, body);
-  // Filter by avg position <= maxPosition
-  const rows = (data.rows || []).filter((r: any) => (r.position ?? r.avgPosition ?? 999) <= maxPosition);
-  return { rows };
+  return gFetch<T>(url, accessToken, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
-
-// --- GBP monthly keywords (past 3 months) ---
-export async function gbpKeywordsLast3M(accessToken: string, locationName: string) {
-  // My Business Performance API
-  // https://businessprofileperformance.googleapis.com/v1/locations/*/searchkeywords/impressions/monthly
-  const since = new Date(); since.setMonth(since.getMonth() - 3);
-  const url = `https://businessprofileperformance.googleapis.com/v1/${encodeURIComponent(locationName)}/searchkeywords/impressions/monthly?monthly_range.start_month.year=${since.getFullYear()}&monthly_range.start_month.month=${since.getMonth()+1}&monthly_range.end_month.year=${new Date().getFullYear()}&monthly_range.end_month.month=${new Date().getMonth()+1}`;
-  return gFetch<any>(url, accessToken);
-}
-
