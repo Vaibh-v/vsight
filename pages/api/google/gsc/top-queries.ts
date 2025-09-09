@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
-import { gscTopQueries } from "../../../../lib/google";
+import { gscTopQueries } from "../../../lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
