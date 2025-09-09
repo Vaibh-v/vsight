@@ -1,6 +1,7 @@
+// pages/api/gbp/locations.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
-import { gbpListLocations } from "../../lib/google";
+import { gbpListLocations } from "../../../lib/google"; // <-- fixed path
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
