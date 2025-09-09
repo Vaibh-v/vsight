@@ -1,52 +1,45 @@
 // pages/api/auth/[...nextauth].ts
-// pages/api/auth/[...nextauth].ts
-import NextAuth from "next-auth";
-import { authOptions } from "../../../lib/auth";
-export default NextAuth(authOptions);
+import NextAuth, { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
-
-const scopes = [
-  "openid",
-  "email",
-  "profile",
-  "https://www.googleapis.com/auth/analytics.readonly",   // GA4 Data API
-  "https://www.googleapis.com/auth/webmasters.readonly",  // Search Console
-  "https://www.googleapis.com/auth/business.manage",      // GBP (incl. performance)
-  "https://www.googleapis.com/auth/spreadsheets",         // Sheets
-  "https://www.googleapis.com/auth/drive.file"            // Drive (create/edit app files)
-].join(" ");
 
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID || "",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      // IMPORTANT: These are the only scopes we need to list properties + pull data
       authorization: {
         params: {
-          scope: scopes,
           access_type: "offline",
-          prompt: "consent" // force refresh new scopes each login
-        }
-      }
-    })
+          prompt: "consent",
+          scope: [
+            "openid",
+            "email",
+            "profile",
+            "https://www.googleapis.com/auth/analytics.readonly",
+            "https://www.googleapis.com/auth/webmasters.readonly",
+            "https://www.googleapis.com/auth/business.manage", // GBP
+          ].join(" "),
+        },
+      },
+    }),
   ],
-  session: { strategy: "jwt" },
   callbacks: {
-    async jwt({ token, account }) {
+    async jwt({ token, account, profile }) {
       if (account) {
         token.access_token = account.access_token;
-        token.refresh_token = account.refresh_token;
-        token.expires_at = (account.expires_at ?? 0) * 1000;
+        token.id_token = account.id_token;
+        token.refresh_token = account.refresh_token ?? token.refresh_token;
       }
       return token;
     },
     async session({ session, token }) {
       (session as any).access_token = token.access_token;
-      (session as any).expires_at = token.expires_at;
+      (session as any).id_token = token.id_token;
+      (session as any).refresh_token = token.refresh_token;
       return session;
-    }
+    },
   },
-  secret: process.env.NEXTAUTH_SECRET
 };
 
 export default NextAuth(authOptions);
