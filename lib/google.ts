@@ -60,6 +60,65 @@ export async function driveFindOrCreateSpreadsheet(accessToken: string, title: s
   }
   return created.spreadsheetId;
 }
+/**
+ * Append rows to a Google Sheet. If the target sheet/tab doesn't exist,
+ * we create it and retry.
+ * Requires scope: https://www.googleapis.com/auth/spreadsheets
+ *
+ * @param accessToken OAuth access token
+ * @param spreadsheetId Spreadsheet ID
+ * @param sheetTitle Target sheet/tab title (e.g., "Settings")
+ * @param values 2D array of values, e.g. [ ["key","value","2025-09-10T00:00:00Z"], ... ]
+ */
+export async function sheetsAppend(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetTitle: string,
+  values: any[][]
+): Promise<any> {
+  const range = `${sheetTitle}!A:Z`; // wide target; API will place values from A1 onward
+
+  async function tryAppend() {
+    const url =
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}` +
+      `/values/${encodeURIComponent(range)}:append` +
+      `?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+
+    return gFetch<any>(url, accessToken, {
+      method: "POST",
+      body: JSON.stringify({ values }),
+    });
+  }
+
+  try {
+    return await tryAppend();
+  } catch (err: any) {
+    // If the sheet/tab doesn't exist yet, create it and retry once.
+    const msg = String(err?.message || "");
+    const shouldCreate =
+      msg.includes("Unable to parse range") ||
+      msg.includes("Requested entity was not found") ||
+      msg.includes("Invalid value at 'data.values'") || // some parse errors
+      msg.includes("was not found");
+
+    if (!shouldCreate) throw err;
+
+    // Create the sheet/tab
+    await gFetch<any>(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+      accessToken,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          requests: [{ addSheet: { properties: { title: sheetTitle } } }],
+        }),
+      }
+    );
+
+    // Retry append once
+    return await tryAppend();
+  }
+}
 
 /**
  * Read a value range from an existing spreadsheet.
