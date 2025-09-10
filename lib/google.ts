@@ -1,138 +1,128 @@
 // lib/google.ts
-// Small, typed wrappers around Google APIs we use.
-// All functions return "safe" shapes so the UI doesn't crash if an API call fails.
+// Minimal, robust wrappers around Google APIs used by VSight.
+// All functions are server-side friendly and typed loosely to avoid build breaks.
 
-type GAProperty = { id: string; displayName: string };
-type GASessionRow = { date: string; sessions: number };
-type GSCSite = { siteUrl: string };
-type GSCTimeRow = { date: string; clicks: number; impressions: number; ctr: number; position: number };
-type GSCTopRow = { query: string; clicks: number; impressions: number; ctr: number; position: number };
+type GAProp = { name?: string; propertyType?: string; displayName?: string; _id?: string; id?: string };
+type GASessionRow = { dimensionValues?: Array<{ value?: string }>; metricValues?: Array<{ value?: string }> };
 
-function authHeaders(token: string) {
-  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-}
+const asJson = async (r: Response) => {
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = (j && (j.error?.message || j.message)) || `HTTP ${r.status}`;
+    throw new Error(msg);
+  }
+  return j;
+};
 
 // ---------- GA4 ----------
-export async function gaListProperties(token: string): Promise<GAProperty[]> {
-  try {
-    const r = await fetch(
-      "https://analyticsadmin.googleapis.com/v1beta/accountSummaries",
-      { headers: authHeaders(token) }
-    );
-    if (!r.ok) throw new Error(await r.text());
-    const j = await r.json();
-    const props: GAProperty[] = [];
-    for (const a of j.accountSummaries || []) {
-      for (const p of a.propertySummaries || []) {
-        props.push({ id: String(p.property || "").replace("properties/", ""), displayName: p.displayName || "" });
-      }
-    }
-    return props;
-  } catch {
-    return [];
-  }
+export async function gaListProperties(accessToken: string): Promise<Array<{ id: string; displayName: string }>> {
+  // Analytics Admin list properties
+  const url =
+    "https://analyticsadmin.googleapis.com/v1beta/properties?filter=parent:accounts/-&pageSize=200";
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const j = await asJson(r);
+  const props: GAProp[] = Array.isArray(j?.properties) ? j.properties : [];
+  return props.map((p) => ({
+    id: (p as any).name?.split("/").pop() || (p as any).id || "",
+    displayName: p.displayName || (p as any).name || "",
+  }));
 }
 
 export async function gaRunReport(
-  token: string,
+  accessToken: string,
   propertyId: string,
-  body: any
-): Promise<GASessionRow[]> {
-  try {
-    const r = await fetch(
-      `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
-      { method: "POST", headers: authHeaders(token), body: JSON.stringify(body) }
-    );
-    if (!r.ok) throw new Error(await r.text());
-    const j = await r.json();
-    const rows: GASessionRow[] = (j.rows || []).map((row: any) => ({
-      date: row.dimensionValues?.[0]?.value || "",
-      sessions: Number(row.metricValues?.[0]?.value || 0),
-    }));
-    return rows;
-  } catch {
-    return [];
-  }
+  body: Record<string, any>
+) {
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return asJson(r);
 }
 
 // ---------- GSC ----------
-export async function gscSites(token: string): Promise<GSCSite[]> {
-  try {
-    const r = await fetch(
-      "https://www.googleapis.com/webmasters/v3/sites",
-      { headers: authHeaders(token) }
-    );
-    if (!r.ok) throw new Error(await r.text());
-    const j = await r.json();
-    return (j.siteEntry || [])
-      .filter((s: any) => s.permissionLevel && s.siteUrl)
-      .map((s: any) => ({ siteUrl: s.siteUrl }));
-  } catch {
-    return [];
-  }
+export async function gscListSites(accessToken: string): Promise<Array<{ siteUrl: string }>> {
+  const url = "https://www.googleapis.com/webmasters/v3/sites";
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const j = await asJson(r);
+  const sites = Array.isArray(j?.siteEntry) ? j.siteEntry : [];
+  return sites
+    .filter((s: any) => s.permissionLevel && s.siteUrl)
+    .map((s: any) => ({ siteUrl: s.siteUrl as string }));
 }
 
-async function gscQueryRaw(
-  token: string,
+export async function gscQuery(
+  accessToken: string,
   siteUrl: string,
-  body: any
-): Promise<any> {
-  const r = await fetch(
-    `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
-    { method: "POST", headers: authHeaders(token), body: JSON.stringify(body) }
-  );
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  payload: Record<string, any>
+) {
+  const url = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return asJson(r);
 }
 
 export async function gscTimeseriesClicks(
-  token: string,
+  accessToken: string,
   siteUrl: string,
   start: string,
   end: string
-): Promise<GSCTimeRow[]> {
-  try {
-    const j = await gscQueryRaw(token, siteUrl, {
-      startDate: start,
-      endDate: end,
-      dimensions: ["date"],
-      rowLimit: 5000,
-      type: "web"
-    });
-    return (j.rows || []).map((row: any) => ({
-      date: row.keys?.[0] || "",
-      clicks: Number(row.clicks || 0),
-      impressions: Number(row.impressions || 0),
-      ctr: Number(row.ctr || 0),
-      position: Number(row.position || 0),
-    }));
-  } catch {
-    return [];
-  }
+): Promise<{ data: Array<{ date: string; clicks: number; impressions: number; ctr: number; position: number }> }> {
+  const j = await gscQuery(accessToken, siteUrl, {
+    startDate: start,
+    endDate: end,
+    dimensions: ["date"],
+    rowLimit: 25000,
+    type: "web",
+  });
+  const rows = Array.isArray(j?.rows) ? j.rows : [];
+  const data = rows.map((row: any) => ({
+    date: String(row?.keys?.[0] || ""),
+    clicks: Number(row?.clicks || 0),
+    impressions: Number(row?.impressions || 0),
+    ctr: Number(row?.ctr || 0),
+    position: Number(row?.position || 0),
+  }));
+  return { data };
 }
 
-export async function gscTop10(
-  token: string,
+export async function gscTopQueries(
+  accessToken: string,
   siteUrl: string,
   start: string,
-  end: string
-): Promise<GSCTopRow[]> {
-  try {
-    const j = await gscQueryRaw(token, siteUrl, {
-      startDate: start,
-      endDate: end,
-      dimensions: ["query"],
-      rowLimit: 10,
-      type: "web"
-    });
-    return (j.rows || []).map((row: any) => ({
-      query: row.keys?.[0] || "",
-      clicks: Number(row.clicks || 0),
-      impressions: Number(row.impressions || 0),
-      ctr: Number(row.ctr || 0),
-      position: Number(row.position || 0),
-    }));
-  } catch {
-    return [];
-  }
+  end: string,
+  rowLimit = 10
+): Promise<Array<{ query: string; clicks: number; impressions: number; ctr: number; position: number }>> {
+  const j = await gscQuery(accessToken, siteUrl, {
+    startDate: start,
+    endDate: end,
+    dimensions: ["query"],
+    rowLimit,
+    type: "web",
+    orderBy: [{ field: "clicks", descending: true }],
+  });
+  const rows = Array.isArray(j?.rows) ? j.rows : [];
+  return rows.map((row: any) => ({
+    query: String(row?.keys?.[0] || ""),
+    clicks: Number(row?.clicks || 0),
+    impressions: Number(row?.impressions || 0),
+    ctr: Number(row?.ctr || 0),
+    position: Number(row?.position || 0),
+  }));
+}
+
+// ---------- GBP (non-blocking) ----------
+export async function gbpListLocations(accessToken: string): Promise<Array<{ name: string; title: string }>> {
+  const ACCOUNT_ID = process.env.GBP_ACCOUNT_ID; // optional
+  if (!ACCOUNT_ID) return []; // keep build & UI unblocked
+  const url = `https://mybusinessbusinessinformation.googleapis.com/v1/accounts/${ACCOUNT_ID}/locations?pageSize=100`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const j = await asJson(r);
+  const arr = Array.isArray(j?.locations) ? j.locations : [];
+  return arr.map((l: any) => ({ name: l.name || "", title: l.title || l.storeCode || l.locationName || "" }));
 }
