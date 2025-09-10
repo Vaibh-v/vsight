@@ -9,22 +9,48 @@ export type Selections = {
   gscSiteUrl?: string;
   gbpLocation?: GBPSelection;
   dateRange?: DateRange;
-  region?: Region; // <— NEW: single “region” object for country/state
+  region?: Region; // canonical country/state holder
 };
 
+// ---- Legacy shape expected by older components ----
+// They previously did: const { state, setState } = useAppState()
+type LegacyState = {
+  // Dates (old code sometimes uses startDate/endDate and/or datePreset)
+  startDate?: string;
+  endDate?: string;
+  datePreset?: string;
+
+  // Country/state were flat before; now they live under region
+  country?: string;
+  state?: string;
+
+  // Some components might directly stash IDs here; keep passthrough
+  ga4PropertyId?: string;
+  gscSiteUrl?: string;
+  // Allow anything else for safety
+  [key: string]: any;
+};
+
+// The context type we expose
 type Ctx = {
+  // New API (canonical)
   ga4PropertyId?: string;
   gscSiteUrl?: string;
   gbpLocation?: GBPSelection;
   dateRange?: DateRange | null;
   region?: Region | null;
   setSelections: (patch: Partial<Selections>) => void;
+
+  // Legacy API (shim)
+  state: LegacyState;
+  setState: (patch: Partial<LegacyState>) => void;
 };
 
 const AppStateContext = createContext<Ctx | null>(null);
 
 const LS_KEY = "vsight.selections.v1";
 
+// ---------- Storage helpers ----------
 function loadFromStorage(): Selections {
   if (typeof window === "undefined") return {};
   try {
@@ -43,24 +69,30 @@ function saveToStorage(sel: Selections) {
       window.localStorage.setItem(LS_KEY, JSON.stringify(sel));
     }
   } catch {
-    // ignore storage failures silently
+    // ignore
   }
 }
 
+// ---------- Provider ----------
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
-  // You can set a default country here if you like:
-  const [state, setState] = useState<Selections>({ region: { country: "USA" } });
+  // canonical selections (new API)
+  const [sel, setSel] = useState<Selections>({
+    region: { country: "USA" }, // default country
+  });
 
   // hydrate once on client
   useEffect(() => {
     const initial = loadFromStorage();
-    // merge with default region if missing
-    setState(prev => ({ region: { country: "USA" }, ...prev, ...initial }));
+    setSel((prev) => ({
+      region: { country: "USA", ...(prev.region || {}), ...(initial.region || {}) },
+      ...prev,
+      ...initial,
+    }));
   }, []);
 
+  // canonical setter
   const setSelections = (patch: Partial<Selections>) => {
-    setState(prev => {
-      // if patch contains a partial region, merge it safely
+    setSel((prev) => {
       const nextRegion =
         patch.region !== undefined
           ? { ...(prev.region || {}), ...(patch.region || {}) }
@@ -72,16 +104,73 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const value = useMemo<Ctx>(
+  // ---------- Legacy adapter ----------
+  // Derive a legacy-style object from canonical selections so old components keep working.
+  const legacyState: LegacyState = useMemo(() => {
+    const startDate = sel.dateRange?.start;
+    const endDate = sel.dateRange?.end;
+    const country = sel.region?.country;
+    const st = sel.region?.state;
+
+    return {
+      startDate,
+      endDate,
+      // We don’t attempt to re-derive which named preset was used; old code can keep a label if needed.
+      datePreset: undefined,
+      country,
+      state: st,
+      ga4PropertyId: sel.ga4PropertyId,
+      gscSiteUrl: sel.gscSiteUrl,
+    };
+  }, [sel]);
+
+  // Translate legacy patches into canonical selections.
+  const setState = (patch: Partial<LegacyState>) => {
+    setSel((prev) => {
+      let next: Selections = { ...prev };
+
+      // Date handling
+      const nextStart = patch.startDate ?? prev.dateRange?.start;
+      const nextEnd = patch.endDate ?? prev.dateRange?.end;
+      if (nextStart || nextEnd) {
+        next.dateRange = {
+          start: nextStart || prev.dateRange?.start || "",
+          end: nextEnd || prev.dateRange?.end || "",
+        };
+      }
+
+      // Country/state handling
+      if (patch.country !== undefined || patch.state !== undefined) {
+        next.region = {
+          country: patch.country ?? prev.region?.country ?? "USA",
+          state: patch.state ?? prev.region?.state,
+        };
+      }
+
+      // Direct IDs (pass-through)
+      if (patch.ga4PropertyId !== undefined) next.ga4PropertyId = patch.ga4PropertyId;
+      if (patch.gscSiteUrl !== undefined) next.gscSiteUrl = patch.gscSiteUrl;
+
+      saveToStorage(next);
+      return next;
+    });
+  };
+
+  const value: Ctx = useMemo(
     () => ({
-      ga4PropertyId: state.ga4PropertyId,
-      gscSiteUrl: state.gscSiteUrl,
-      gbpLocation: state.gbpLocation ?? null,
-      dateRange: state.dateRange ?? null,
-      region: state.region ?? null,
+      // new API
+      ga4PropertyId: sel.ga4PropertyId,
+      gscSiteUrl: sel.gscSiteUrl,
+      gbpLocation: sel.gbpLocation ?? null,
+      dateRange: sel.dateRange ?? null,
+      region: sel.region ?? null,
       setSelections,
+
+      // legacy API (shim)
+      state: legacyState,
+      setState,
     }),
-    [state]
+    [sel, legacyState]
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
