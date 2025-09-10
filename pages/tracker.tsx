@@ -1,3 +1,4 @@
+// pages/tracker.tsx
 import { useSession } from "next-auth/react";
 import useSWR from "swr";
 import { useEffect, useState } from "react";
@@ -68,6 +69,11 @@ export default function Tracker() {
 
   const gscOptions = (gscSites?.sites || []).map((s: any) => s);
 
+  const setPresetDays = (days: number) => {
+    const r = lastNDays(days);
+    setSelections({ dateRange: { start: r.startDate, end: r.endDate } });
+  };
+
   return (
     <main className="max-w-6xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-semibold">Organic Tracker</h1>
@@ -97,13 +103,13 @@ export default function Tracker() {
 
         <div className="flex gap-2">
           <button
-            onClick={() => setSelections({ dateRange: lastNDays(28) })}
+            onClick={() => setPresetDays(28)}
             className="px-3 py-2 border rounded"
           >
             Last 28 days
           </button>
           <button
-            onClick={() => setSelections({ dateRange: lastNDays(90) })}
+            onClick={() => setPresetDays(90)}
             className="px-3 py-2 border rounded"
           >
             Last 90 days
