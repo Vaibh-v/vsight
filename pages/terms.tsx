@@ -1,1 +1,9 @@
-import Nav from "../components/Nav";export default function Terms(){return(<main><Nav/><div className="max-w-3xl mx-auto p-6 space-y-4 text-sm"><h1 className="text-xl font-bold">Terms of Use</h1><p>Use at your own risk. This tool aggregates analytics data via provider APIs. You are responsible for the permissions you grant.</p></div></main>);}
+// pages/terms.tsx
+export default function Terms() {
+  return (
+    <main className="max-w-4xl mx-auto p-6 space-y-4">
+      <h1 className="text-2xl font-semibold">Terms of Service</h1>
+      <p className="text-gray-700 text-sm">Your terms content goes here.</p>
+    </main>
+  );
+}
