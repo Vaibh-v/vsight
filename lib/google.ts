@@ -217,3 +217,45 @@ export async function sheetsAppend(
   )}/values/${encodeURIComponent(sheetName)}:append?valueInputOption=USER_ENTERED`;
   await jpost(url, accessToken, { values });
 }
+// --- Search Console: Top Queries helper ---
+export async function gscTopQueries(
+  accessToken: string,
+  siteUrl: string,
+  opts: {
+    startDate: string;
+    endDate: string;
+    rowLimit?: number;
+    searchType?: "web" | "image" | "video" | "news" | "discover" | "googleNews";
+  }
+) {
+  const { startDate, endDate, rowLimit = 1000, searchType = "web" } = opts;
+
+  const endpoint = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
+    siteUrl
+  )}/searchAnalytics/query`;
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      startDate,
+      endDate,
+      dimensions: ["query"],
+      rowLimit,
+      type: searchType, // aka searchType
+      dataState: "final",
+      aggregationType: "auto",
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`GSC top queries failed: ${res.status} ${text}`);
+  }
+
+  // Shape: { rows: [{ keys:["keyword"], clicks, impressions, ctr, position }, ...] }
+  return res.json();
+}
