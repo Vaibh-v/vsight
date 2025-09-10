@@ -27,6 +27,7 @@ type LegacyState = {
   // Some components might directly stash IDs here; keep passthrough
   ga4PropertyId?: string;
   gscSiteUrl?: string;
+
   // Allow anything else for safety
   [key: string]: any;
 };
@@ -39,7 +40,7 @@ type Ctx = {
   gbpLocation?: GBPSelection;
   dateRange?: DateRange | null;
   region?: Region | null;
-  setSelections: (patch: Partial<Selections>) => void;
+  setSelections: (patch: Partial<Selections> | any) => void;
 
   // Legacy API (shim)
   state: LegacyState;
@@ -50,13 +51,43 @@ const AppStateContext = createContext<Ctx | null>(null);
 
 const LS_KEY = "vsight.selections.v1";
 
+/** Normalize possible {startDate,endDate} into {start,end}. */
+function normalizeDateRange(dr: any | undefined): DateRange | undefined {
+  if (!dr) return undefined;
+  if (typeof dr !== "object") return undefined;
+  const hasStartEnd = "start" in dr || "end" in dr;
+  const hasStartDateEndDate = "startDate" in dr || "endDate" in dr;
+
+  if (hasStartEnd) {
+    return {
+      start: String(dr.start ?? ""),
+      end: String(dr.end ?? ""),
+    };
+  }
+  if (hasStartDateEndDate) {
+    return {
+      start: String(dr.startDate ?? ""),
+      end: String(dr.endDate ?? ""),
+    };
+  }
+  return undefined;
+}
+
 // ---------- Storage helpers ----------
 function loadFromStorage(): Selections {
   if (typeof window === "undefined") return {};
   try {
     const raw = window.localStorage.getItem(LS_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as any;
+
+    // Normalize any legacy dateRange shape on load
+    if (parsed?.dateRange) {
+      const nr = normalizeDateRange(parsed.dateRange);
+      if (nr) parsed.dateRange = nr;
+      else delete parsed.dateRange;
+    }
+
     return (parsed && typeof parsed === "object" ? parsed : {}) as Selections;
   } catch {
     return {};
@@ -90,15 +121,23 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  // canonical setter
-  const setSelections = (patch: Partial<Selections>) => {
+  // canonical setter (accepts either {start,end} or {startDate,endDate})
+  const setSelections = (patch: Partial<Selections> | any) => {
+    // Normalize incoming dateRange if it uses legacy keys
+    let normalizedPatch: Partial<Selections> = { ...patch };
+    if (patch?.dateRange) {
+      const nr = normalizeDateRange(patch.dateRange);
+      if (nr) normalizedPatch.dateRange = nr;
+      else delete (normalizedPatch as any).dateRange; // avoid bad shapes
+    }
+
     setSel((prev) => {
       const nextRegion =
-        patch.region !== undefined
-          ? { ...(prev.region || {}), ...(patch.region || {}) }
+        normalizedPatch.region !== undefined
+          ? { ...(prev.region || {}), ...(normalizedPatch.region || {}) }
           : prev.region;
 
-      const next: Selections = { ...prev, ...patch, region: nextRegion };
+      const next: Selections = { ...prev, ...normalizedPatch, region: nextRegion };
       saveToStorage(next);
       return next;
     });
@@ -129,7 +168,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     setSel((prev) => {
       let next: Selections = { ...prev };
 
-      // Date handling
+      // Date handling (legacy keys)
       const nextStart = patch.startDate ?? prev.dateRange?.start;
       const nextEnd = patch.endDate ?? prev.dateRange?.end;
       if (nextStart || nextEnd) {
