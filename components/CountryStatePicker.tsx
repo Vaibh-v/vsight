@@ -1,34 +1,38 @@
 import { useAppState } from "./state/AppStateProvider";
-import { COUNTRIES, REGIONS_BY_COUNTRY } from "../lib/locations";
+
+const COUNTRIES = [
+  { code: "USA", label: "USA" },
+  { code: "IND", label: "India" },
+  { code: "GBR", label: "UK" },
+  { code: "AUS", label: "Australia" },
+  { code: "CAN", label: "Canada" },
+];
 
 export default function CountryStatePicker() {
-  const { state, setState } = useAppState();
-  const regions = REGIONS_BY_COUNTRY[state.country] || [];
+  const { region, setSelections } = useAppState();
+  const country = region?.country || "USA";
+  const state = region?.state || "";
 
   return (
-    <div className="flex gap-2">
+    <div className="flex items-center gap-2">
       <select
-        className="border rounded px-3 py-1"
-        value={state.country}
-        onChange={(e) => setState({ country: e.target.value, region: undefined })}
+        className="border rounded px-2 py-1"
+        value={country}
+        onChange={(e) => setSelections({ region: { country: e.target.value } })}
       >
         {COUNTRIES.map((c) => (
-          <option key={c.code} value={c.code}>{c.name}</option>
+          <option key={c.code} value={c.code}>
+            {c.label}
+          </option>
         ))}
       </select>
 
-      {/* Optional region */}
-      <select
-        className="border rounded px-3 py-1"
-        value={state.region || ""}
-        onChange={(e) => setState({ region: e.target.value || undefined })}
-        disabled={!regions.length}
-      >
-        <option value="">All states / regions</option>
-        {regions.map((r) => (
-          <option key={r} value={r}>{r}</option>
-        ))}
-      </select>
+      <input
+        className="border rounded px-2 py-1"
+        placeholder="State/Region (optional)"
+        value={state}
+        onChange={(e) => setSelections({ region: { country, state: e.target.value } })}
+      />
     </div>
   );
 }
