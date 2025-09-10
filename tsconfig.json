@@ -14,9 +14,7 @@
     "incremental": true,
     "types": ["next", "next/types/global", "next-auth"],
     "baseUrl": ".",
-    "paths": {
-      "@/*": ["*"]
-    }
+    "paths": { "@/*": ["*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
