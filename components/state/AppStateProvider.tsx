@@ -1,67 +1,86 @@
-import React, { createContext, useContext, useMemo, useState, useEffect } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-export type DatePreset = "last28d" | "last60d" | "last90d" | "custom";
+export type DateRange = { start: string; end: string };
 
-export type AppState = {
-  // Connections / selections
-  gaPropertyId?: string;
+export type GBPSelection = { name: string; title?: string } | null;
+
+export type Selections = {
+  ga4PropertyId?: string;
   gscSiteUrl?: string;
-  gbpLocationName?: string;
-
-  // Date / region
-  datePreset: DatePreset;
-  startDate?: string; // ISO yyyy-mm-dd (when preset=custom)
-  endDate?: string;
-  country: string;    // ISO-3166 alpha-2 or "ALL"
-  region?: string;    // state/province optional (free text from dropdown)
-
-  // UI
-  aiPanelOpen: boolean;
+  gbpLocation?: GBPSelection;
+  dateRange?: DateRange;
 };
 
 type Ctx = {
-  state: AppState;
-  setState: (patch: Partial<AppState> | ((prev: AppState) => Partial<AppState>)) => void;
+  ga4PropertyId?: string;
+  gscSiteUrl?: string;
+  gbpLocation?: GBPSelection;
+  dateRange?: DateRange | null;
+  setSelections: (patch: Partial<Selections>) => void;
 };
 
-const AppStateCtx = createContext<Ctx | null>(null);
+const AppStateContext = createContext<Ctx | null>(null);
 
-const DEFAULT_STATE: AppState = {
-  datePreset: "last28d",
-  country: "ALL",
-  aiPanelOpen: true
-};
+const LS_KEY = "vsight.selections.v1";
+
+function loadFromStorage(): Selections {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(LS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed as Selections;
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function saveToStorage(sel: Selections) {
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(LS_KEY, JSON.stringify(sel));
+    }
+  } catch {
+    // ignore
+  }
+}
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
-  const [state, _set] = useState<AppState>(() => {
-    if (typeof window === "undefined") return DEFAULT_STATE;
-    try {
-      const raw = localStorage.getItem("vsight/appState");
-      return raw ? { ...DEFAULT_STATE, ...JSON.parse(raw) } : DEFAULT_STATE;
-    } catch {
-      return DEFAULT_STATE;
-    }
-  });
+  const [state, setState] = useState<Selections>({});
 
-  const setState: Ctx["setState"] = (patch) => {
-    _set((prev) => {
-      const diff = typeof patch === "function" ? patch(prev) : patch;
-      return { ...prev, ...diff };
+  // hydrate once on client
+  useEffect(() => {
+    const initial = loadFromStorage();
+    setState(initial);
+  }, []);
+
+  const setSelections = (patch: Partial<Selections>) => {
+    setState(prev => {
+      const next = { ...prev, ...patch };
+      saveToStorage(next);
+      return next;
     });
   };
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("vsight/appState", JSON.stringify(state));
-    }
-  }, [state]);
+  const value = useMemo<Ctx>(
+    () => ({
+      ga4PropertyId: state.ga4PropertyId,
+      gscSiteUrl: state.gscSiteUrl,
+      gbpLocation: state.gbpLocation ?? null,
+      dateRange: state.dateRange ?? null,
+      setSelections,
+    }),
+    [state]
+  );
 
-  const value = useMemo<Ctx>(() => ({ state, setState }), [state]);
-  return <AppStateCtx.Provider value={value}>{children}</AppStateCtx.Provider>;
+  return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }
 
 export function useAppState(): Ctx {
-  const ctx = useContext(AppStateCtx);
-  if (!ctx) throw new Error("useAppState must be used within <AppStateProvider>");
+  const ctx = useContext(AppStateContext);
+  if (!ctx) {
+    throw new Error("useAppState must be used within <AppStateProvider>");
+  }
   return ctx;
 }
