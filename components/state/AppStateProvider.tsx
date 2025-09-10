@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 export type DateRange = { start: string; end: string };
-
+export type Region = { country: string; state?: string };
 export type GBPSelection = { name: string; title?: string } | null;
 
 export type Selections = {
@@ -9,6 +9,7 @@ export type Selections = {
   gscSiteUrl?: string;
   gbpLocation?: GBPSelection;
   dateRange?: DateRange;
+  region?: Region; // <— NEW: single “region” object for country/state
 };
 
 type Ctx = {
@@ -16,6 +17,7 @@ type Ctx = {
   gscSiteUrl?: string;
   gbpLocation?: GBPSelection;
   dateRange?: DateRange | null;
+  region?: Region | null;
   setSelections: (patch: Partial<Selections>) => void;
 };
 
@@ -29,8 +31,7 @@ function loadFromStorage(): Selections {
     const raw = window.localStorage.getItem(LS_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") return parsed as Selections;
-    return {};
+    return (parsed && typeof parsed === "object" ? parsed : {}) as Selections;
   } catch {
     return {};
   }
@@ -42,22 +43,30 @@ function saveToStorage(sel: Selections) {
       window.localStorage.setItem(LS_KEY, JSON.stringify(sel));
     }
   } catch {
-    // ignore
+    // ignore storage failures silently
   }
 }
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<Selections>({});
+  // You can set a default country here if you like:
+  const [state, setState] = useState<Selections>({ region: { country: "USA" } });
 
   // hydrate once on client
   useEffect(() => {
     const initial = loadFromStorage();
-    setState(initial);
+    // merge with default region if missing
+    setState(prev => ({ region: { country: "USA" }, ...prev, ...initial }));
   }, []);
 
   const setSelections = (patch: Partial<Selections>) => {
     setState(prev => {
-      const next = { ...prev, ...patch };
+      // if patch contains a partial region, merge it safely
+      const nextRegion =
+        patch.region !== undefined
+          ? { ...(prev.region || {}), ...(patch.region || {}) }
+          : prev.region;
+
+      const next: Selections = { ...prev, ...patch, region: nextRegion };
       saveToStorage(next);
       return next;
     });
@@ -69,6 +78,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       gscSiteUrl: state.gscSiteUrl,
       gbpLocation: state.gbpLocation ?? null,
       dateRange: state.dateRange ?? null,
+      region: state.region ?? null,
       setSelections,
     }),
     [state]
@@ -79,8 +89,6 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
 export function useAppState(): Ctx {
   const ctx = useContext(AppStateContext);
-  if (!ctx) {
-    throw new Error("useAppState must be used within <AppStateProvider>");
-  }
+  if (!ctx) throw new Error("useAppState must be used within <AppStateProvider>");
   return ctx;
 }
