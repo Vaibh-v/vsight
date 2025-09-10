@@ -1,7 +1,6 @@
-// FILE: pages/api/google/gsc/sites.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
-import { gscSites } from "../../../lib/google";
+import { gscSites } from "@/lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
