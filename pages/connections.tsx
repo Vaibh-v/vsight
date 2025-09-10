@@ -1,103 +1,37 @@
-import useSWR from "swr";
-import { useAppState } from "../components/state/AppStateProvider";
+// pages/connections.tsx
+import { useSession, signIn, signOut } from "next-auth/react";
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
-
-export default function ConnectionsPage() {
-  const { state, setState } = useAppState();
-  const { gaPropertyId, gscSiteUrl, gbpLocationName } = state;
-
-  // API calls
-  const {
-    data: ga,
-    error: gaErr,
-    isLoading: gaLoading,
-  } = useSWR("/api/google/ga/properties", fetcher);
-
-  const {
-    data: gsc,
-    error: gscErr,
-    isLoading: gscLoading,
-  } = useSWR("/api/google/gsc/sites", fetcher);
-
-  const {
-    data: gbp,
-    error: gbpErr,
-    isLoading: gbpLoading,
-  } = useSWR("/api/google/gbp/locations", fetcher); // ensure this route exists
-
+export default function Connections() {
+  const { status, data } = useSession();
   return (
-    <div className="max-w-4xl mx-auto space-y-6 py-8">
+    <main className="max-w-6xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-semibold">Connections</h1>
 
-      {/* GA4 */}
-      <div className="border rounded-lg p-4">
-        <div className="font-medium mb-2">Google Analytics 4</div>
-        {gaErr && (
-          <p className="text-red-600 text-sm">
-            GA error: {String((gaErr as any).message || (gaErr as any).error || gaErr)}
+      {status === "authenticated" ? (
+        <div className="space-y-3">
+          <p className="text-sm text-gray-700">
+            Signed in as <b>{data?.user?.email || data?.user?.name}</b>.
           </p>
-        )}
-        <select
-          disabled={gaLoading || !!gaErr}
-          className="border rounded p-2 w-full"
-          value={gaPropertyId || ""}
-          onChange={(e) => setState({ gaPropertyId: e.target.value || undefined })}
-        >
-          <option value="">Select a property</option>
-          {(ga?.properties || []).map((p: any) => (
-            <option key={p.propertyId} value={p.propertyId}>
-              {p.displayName} (prop {p.propertyId})
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* GSC */}
-      <div className="border rounded-lg p-4">
-        <div className="font-medium mb-2">Google Search Console</div>
-        {gscErr && (
-          <p className="text-red-600 text-sm">
-            GSC error: {String((gscErr as any).message || (gscErr as any).error || gscErr)}
+          <div className="flex gap-2">
+            <button onClick={() => signOut({ callbackUrl: "/" })} className="px-3 py-2 border rounded">
+              Sign out
+            </button>
+          </div>
+          <p className="text-sm text-gray-600">
+            You can now open <b>Dashboard</b> or <b>Organic Tracker</b>.
           </p>
-        )}
-        <select
-          disabled={gscLoading || !!gscErr}
-          className="border rounded p-2 w-full"
-          value={gscSiteUrl || ""}
-          onChange={(e) => setState({ gscSiteUrl: e.target.value || undefined })}
-        >
-          <option value="">Select a site</option>
-          {(gsc?.sites || []).map((s: any) => (
-            <option key={s.siteUrl} value={s.siteUrl}>
-              {s.siteUrl}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* GBP */}
-      <div className="border rounded-lg p-4">
-        <div className="font-medium mb-2">Google Business Profile</div>
-        {gbpErr && (
-          <p className="text-red-600 text-sm">
-            GBP error: {String((gbpErr as any).message || (gbpErr as any).error || gbpErr)}
-          </p>
-        )}
-        <select
-          disabled={gbpLoading || !!gbpErr}
-          className="border rounded p-2 w-full"
-          value={gbpLocationName || ""}
-          onChange={(e) => setState({ gbpLocationName: e.target.value || undefined })}
-        >
-          <option value="">Select a location</option>
-          {(gbp?.locations || []).map((l: any) => (
-            <option key={l.name} value={l.name}>
-              {l.title}
-            </option>
-          ))}
-        </select>
-      </div>
-    </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-sm text-gray-700">You are not signed in.</p>
+          <button
+            onClick={() => signIn("google", { callbackUrl: "/connections" })}
+            className="px-3 py-2 border rounded"
+          >
+            Sign in with Google
+          </button>
+        </div>
+      )}
+    </main>
   );
 }
