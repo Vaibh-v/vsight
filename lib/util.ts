@@ -1,17 +1,18 @@
-export const iso = (d: Date) => d.toISOString().slice(0, 10);
-
-export function lastNDays(n: number) {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - (n - 1));
-  return { startDate: iso(start), endDate: iso(end) };
+// lib/util.ts
+export function iso(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
-export function toCSV(rows: any[], headers: string[]) {
-  // Use regex replace instead of replaceAll to keep ES2020-compatible typings
-  const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  return [
-    headers.join(","),
-    ...rows.map((r) => headers.map((h) => esc((r as any)[h])).join(",")),
-  ].join("\n");
+export function lastNDays(n: number) {
+  const end = iso(new Date());
+  const start = iso(new Date(Date.now() - (n - 1) * 24 * 60 * 60 * 1000));
+  // Return both shapes for compatibility across files
+  return {
+    start, end,              // ← new shape (DateRange)
+    startDate: start,        // ← legacy shape
+    endDate: end,
+  };
 }
