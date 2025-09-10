@@ -46,17 +46,25 @@ export default function Dashboard() {
       : null
   );
 
+  // merge by date
   const merged = useMemo(() => {
     const map = new Map<string, any>();
+
     (gaSeries?.rows || gaSeries?.data || []).forEach((r: any) => {
       map.set(r.date, { date: r.date, sessions: r.sessions ?? 0 });
     });
+
     (gscSeries?.data || []).forEach((r: any) => {
-      const row = map.get(r.date) || { date: r.date };
+      const row: any = map.get(r.date) || { date: r.date };
       row.clicks = r.clicks ?? 0;
-      row.ctr = Number((((r.ctr ?? 0) * 100).toFixed ? ((r.ctr ?? 0) * 100).toFixed(2) : r.ctr) ?? 0);
+
+      // ✅ FIX: don’t test for .toFixed; just compute safely
+      const ctr = Number(((r.ctr ?? 0) * 100).toFixed(2)); // percent with 2 decimals
+      row.ctr = isNaN(ctr) ? 0 : ctr;
+
       map.set(r.date, row);
     });
+
     return Array.from(map.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
   }, [gaSeries, gscSeries]);
 
@@ -80,6 +88,7 @@ export default function Dashboard() {
     <main className="max-w-6xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-semibold">Default Dashboard</h1>
 
+      {/* Selectors */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div>
           <label className="text-sm text-gray-600">GA4 Property</label>
@@ -132,6 +141,7 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Data preview (swap with your chart) */}
       <div className="border rounded-lg p-4">
         <h2 className="font-medium mb-2">Sessions, Clicks & CTR</h2>
         <pre className="text-xs bg-gray-50 p-3 rounded overflow-auto">
