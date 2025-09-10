@@ -1,7 +1,7 @@
 // pages/api/google/gbp/locations.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
-import { gbpListLocations } from "../../../../lib/google";
+import { gbpListLocations } from "../../../lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
