@@ -12,9 +12,14 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "types": ["next", "next/types/global", "next-auth"],
     "baseUrl": ".",
-    "paths": { "@/*": ["*"] }
+    "paths": {
+      "@/*": ["*"],
+      "@/lib/*": ["lib/*"],
+      "@/components/*": ["components/*"],
+      "@/pages/*": ["pages/*"]
+    },
+    "types": ["next", "next/types/global", "next-auth"]
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
