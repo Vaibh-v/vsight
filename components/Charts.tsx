@@ -1,20 +1,23 @@
-import { ResponsiveContainer, ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Bar, Line } from "recharts";
-export function TrafficChart({ data }: { data: any[] }) {
-  const withMA = data.map((d, i, arr) => { const s = Math.max(0, i - 6); const span = arr.slice(s, i + 1); const ma = span.reduce((sum, x) => sum + (x.sessions ?? 0), 0) / span.length; return { ...d, sessionsMA7: Math.round(ma) }; });
+// components/Charts.tsx
+import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend } from "recharts";
+
+export function TrafficChart({ data }: { data: Array<any> }) {
+  // Expect items: { date: "YYYYMMDD", sessions?: number, clicks?: number, ctr?: number }
+  // Render sessions & clicks on left, CTR on right axis.
   return (
-    <div className="w-full h-[360px]">
-      <ResponsiveContainer>
-        <ComposedChart data={withMA}>
+    <div style={{ height: 360 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" minTickGap={24} />
-          <YAxis yAxisId="left" />
-          <YAxis yAxisId="right" orientation="right" />
-          <Tooltip /><Legend />
-          <Bar yAxisId="left" dataKey="sessions" name="Sessions" />
-          <Line yAxisId="left" type="monotone" dataKey="sessionsMA7" dot={false} name="Sessions (7d MA)" />
-          <Line yAxisId="right" type="monotone" dataKey="clicks" dot={false} name="Clicks" />
-          <Line yAxisId="right" type="monotone" dataKey="ctr" dot={false} name="CTR" />
-        </ComposedChart>
+          <XAxis dataKey="date" />
+          <YAxis yAxisId="l" />
+          <YAxis yAxisId="r" orientation="right" />
+          <Tooltip />
+          <Legend />
+          <Line yAxisId="l" type="monotone" dataKey="sessions" name="Sessions" strokeWidth={2} dot={false} />
+          <Line yAxisId="l" type="monotone" dataKey="clicks" name="Clicks" strokeWidth={2} dot={false} />
+          <Line yAxisId="r" type="monotone" dataKey="ctr" name="CTR (%)" strokeWidth={2} dot={false} />
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );
