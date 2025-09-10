@@ -12,12 +12,11 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "types": ["next", "next-auth"],
-
     "baseUrl": ".",
     "paths": {
       "@/*": ["*"]
-    }
+    },
+    "types": ["next", "next/types/global", "next-auth"]
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
