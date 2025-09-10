@@ -1,261 +1,138 @@
 // lib/google.ts
-// Unified Google helpers used by API routes. All imports should be:  import { ... } from "@/lib/google";
+// Small, typed wrappers around Google APIs we use.
+// All functions return "safe" shapes so the UI doesn't crash if an API call fails.
 
-type HeadersInit_ = Record<string, string>;
-const jget = async (url: string, token: string) => {
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } as HeadersInit_ });
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-  return r.json();
-};
-const jpost = async (url: string, token: string, body: any) => {
-  const r = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    } as HeadersInit_,
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-  return r.json();
-};
+type GAProperty = { id: string; displayName: string };
+type GASessionRow = { date: string; sessions: number };
+type GSCSite = { siteUrl: string };
+type GSCTimeRow = { date: string; clicks: number; impressions: number; ctr: number; position: number };
+type GSCTopRow = { query: string; clicks: number; impressions: number; ctr: number; position: number };
 
-// ---------------- GA4 ----------------
+function authHeaders(token: string) {
+  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
 
-export async function gaListProperties(accessToken: string) {
-  // 1) List accounts
-  let accounts: any[] = [];
+// ---------- GA4 ----------
+export async function gaListProperties(token: string): Promise<GAProperty[]> {
   try {
-    const a = await jget("https://analyticsadmin.googleapis.com/v1beta/accounts", accessToken);
-    accounts = a.accounts || [];
-  } catch {
-    // If user lacks admin scope, try properties directly via search (best-effort)
-  }
-
-  const allProps: any[] = [];
-  // 2) For each account, list properties
-  for (const acc of accounts) {
-    try {
-      const p = await jget(
-        `https://analyticsadmin.googleapis.com/v1beta/properties?filter=parent:${encodeURIComponent(
-          acc.name
-        )}`,
-        accessToken
-      );
-      (p.properties || []).forEach((prop: any) => {
-        allProps.push({
-          id: prop.name?.split("/")[1],
-          displayName: prop.displayName,
-          propertyId: prop.name?.split("/")[1],
-        });
-      });
-    } catch {
-      // ignore per-account errors
+    const r = await fetch(
+      "https://analyticsadmin.googleapis.com/v1beta/accountSummaries",
+      { headers: authHeaders(token) }
+    );
+    if (!r.ok) throw new Error(await r.text());
+    const j = await r.json();
+    const props: GAProperty[] = [];
+    for (const a of j.accountSummaries || []) {
+      for (const p of a.propertySummaries || []) {
+        props.push({ id: String(p.property || "").replace("properties/", ""), displayName: p.displayName || "" });
+      }
     }
-  }
-
-  // If none found, try the data API to detect a property provided by env or user later. Still return array.
-  return { properties: allProps };
-}
-
-export async function gaRunReport(
-  accessToken: string,
-  propertyId: string,
-  body: {
-    dimensions?: Array<{ name: string }>;
-    metrics?: Array<{ name: string }>;
-    dateRanges: Array<{ startDate: string; endDate: string }>;
-    dimensionFilter?: any;
-    metricFilter?: any;
-    limit?: string | number;
-  }
-) {
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
-    propertyId
-  )}:runReport`;
-  const json = await jpost(url, accessToken, body);
-  // Normalize rows
-  const rows =
-    (json.rows || []).map((r: any) => ({
-      dimensionValues: r.dimensionValues,
-      metricValues: r.metricValues,
-    })) || [];
-  return { rows };
-}
-
-// ---------------- GSC ----------------
-
-export async function gscSites(accessToken: string) {
-  // Webmasters API
-  const json = await jget("https://www.googleapis.com/webmasters/v3/sites/list", accessToken);
-  const sites = (json.siteEntry || []).map((s: any) => ({
-    siteUrl: s.siteUrl,
-    permissionLevel: s.permissionLevel,
-  }));
-  return { sites };
-}
-
-export async function gscListSites(accessToken: string) {
-  // alias for earlier code references
-  return gscSites(accessToken);
-}
-
-export async function gscQuery(
-  accessToken: string,
-  siteUrl: string,
-  body: {
-    startDate: string;
-    endDate: string;
-    dimensions?: string[];
-    rowLimit?: number;
-    type?: "web" | "image" | "video" | "news" | "discover";
-    dimensionFilterGroups?: any[];
-    aggregationType?: "auto" | "byPage" | "byProperty";
-    searchType?: string; // ignore, kept for compatibility
-  }
-) {
-  const url = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
-    siteUrl
-  )}/searchAnalytics/query`;
-  const payload: any = {
-    startDate: body.startDate,
-    endDate: body.endDate,
-    dimensions: body.dimensions || [],
-    rowLimit: body.rowLimit || 25000,
-    // API uses "searchType" in old docs; modern clients still accept "type"
-    type: body.type || "web",
-  };
-  if (body.dimensionFilterGroups) payload.dimensionFilterGroups = body.dimensionFilterGroups;
-  if (body.aggregationType) payload.aggregationType = body.aggregationType;
-  const json = await jpost(url, accessToken, payload);
-  return json; // returns { rows: [{keys:[], clicks, impressions, ctr, position}], ...}
-}
-
-export async function gscTimeseriesClicks(
-  accessToken: string,
-  siteUrl: string,
-  startDate: string,
-  endDate: string
-) {
-  const json = await gscQuery(accessToken, siteUrl, {
-    startDate,
-    endDate,
-    dimensions: ["date"],
-    rowLimit: 25000,
-    type: "web",
-  });
-  const data =
-    (json.rows || []).map((r: any) => ({
-      date: r.keys?.[0],
-      clicks: r.clicks || 0,
-      ctr: r.ctr || 0,
-    })) || [];
-  return { data };
-}
-
-// ---------------- GBP (Business Profile) ----------------
-// We’ll try Business Information API first (v1). If that fails, return empty array.
-
-export async function gbpListLocations(accessToken: string) {
-  // Attempt simple list with readMask to get minimal fields.
-  // If the API requires accounts scoping, this may 403; we catch and return [].
-  try {
-    const url =
-      "https://mybusinessbusinessinformation.googleapis.com/v1/locations?readMask=name,title,storeCode";
-    const json = await jget(url, accessToken);
-    const arr = json.locations || json.results || json || [];
-    const locations = (arr || []).map((l: any) => ({
-      name: l.name || l.locationName || "",
-      title: l.title || l.storeCode || l.locationName || "",
-    }));
-    return locations;
+    return props;
   } catch {
     return [];
   }
 }
 
-// ---------------- Google Drive / Sheets ----------------
-
-export async function driveFindOrCreateSpreadsheet(accessToken: string, name: string) {
-  // 1) Try to find
-  const listUrl =
-    "https://www.googleapis.com/drive/v3/files?q=" +
-    encodeURIComponent(`name='${name}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`) +
-    "&fields=files(id,name)";
+export async function gaRunReport(
+  token: string,
+  propertyId: string,
+  body: any
+): Promise<GASessionRow[]> {
   try {
-    const found = await jget(listUrl, accessToken);
-    const file = (found.files || [])[0];
-    if (file?.id) return file.id;
+    const r = await fetch(
+      `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
+      { method: "POST", headers: authHeaders(token), body: JSON.stringify(body) }
+    );
+    if (!r.ok) throw new Error(await r.text());
+    const j = await r.json();
+    const rows: GASessionRow[] = (j.rows || []).map((row: any) => ({
+      date: row.dimensionValues?.[0]?.value || "",
+      sessions: Number(row.metricValues?.[0]?.value || 0),
+    }));
+    return rows;
   } catch {
-    // ignore
-  }
-  // 2) Create
-  const createUrl = "https://sheets.googleapis.com/v4/spreadsheets";
-  const created = await jpost(createUrl, accessToken, { properties: { title: name } });
-  return created.spreadsheetId;
-}
-
-export async function sheetsGet(accessToken: string, spreadsheetId: string, range: string) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
-    spreadsheetId
-  )}/values/${encodeURIComponent(range)}`;
-  try {
-    return await jget(url, accessToken);
-  } catch {
-    return { values: [] };
+    return [];
   }
 }
 
-export async function sheetsAppend(
-  accessToken: string,
-  spreadsheetId: string,
-  sheetName: string,
-  values: any[][]
-) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
-    spreadsheetId
-  )}/values/${encodeURIComponent(sheetName)}:append?valueInputOption=USER_ENTERED`;
-  await jpost(url, accessToken, { values });
+// ---------- GSC ----------
+export async function gscSites(token: string): Promise<GSCSite[]> {
+  try {
+    const r = await fetch(
+      "https://www.googleapis.com/webmasters/v3/sites",
+      { headers: authHeaders(token) }
+    );
+    if (!r.ok) throw new Error(await r.text());
+    const j = await r.json();
+    return (j.siteEntry || [])
+      .filter((s: any) => s.permissionLevel && s.siteUrl)
+      .map((s: any) => ({ siteUrl: s.siteUrl }));
+  } catch {
+    return [];
+  }
 }
-// --- Search Console: Top Queries helper ---
-export async function gscTopQueries(
-  accessToken: string,
+
+async function gscQueryRaw(
+  token: string,
   siteUrl: string,
-  opts: {
-    startDate: string;
-    endDate: string;
-    rowLimit?: number;
-    searchType?: "web" | "image" | "video" | "news" | "discover" | "googleNews";
+  body: any
+): Promise<any> {
+  const r = await fetch(
+    `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
+    { method: "POST", headers: authHeaders(token), body: JSON.stringify(body) }
+  );
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function gscTimeseriesClicks(
+  token: string,
+  siteUrl: string,
+  start: string,
+  end: string
+): Promise<GSCTimeRow[]> {
+  try {
+    const j = await gscQueryRaw(token, siteUrl, {
+      startDate: start,
+      endDate: end,
+      dimensions: ["date"],
+      rowLimit: 5000,
+      type: "web"
+    });
+    return (j.rows || []).map((row: any) => ({
+      date: row.keys?.[0] || "",
+      clicks: Number(row.clicks || 0),
+      impressions: Number(row.impressions || 0),
+      ctr: Number(row.ctr || 0),
+      position: Number(row.position || 0),
+    }));
+  } catch {
+    return [];
   }
-) {
-  const { startDate, endDate, rowLimit = 1000, searchType = "web" } = opts;
+}
 
-  const endpoint = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
-    siteUrl
-  )}/searchAnalytics/query`;
-
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      startDate,
-      endDate,
+export async function gscTop10(
+  token: string,
+  siteUrl: string,
+  start: string,
+  end: string
+): Promise<GSCTopRow[]> {
+  try {
+    const j = await gscQueryRaw(token, siteUrl, {
+      startDate: start,
+      endDate: end,
       dimensions: ["query"],
-      rowLimit,
-      type: searchType, // aka searchType
-      dataState: "final",
-      aggregationType: "auto",
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`GSC top queries failed: ${res.status} ${text}`);
+      rowLimit: 10,
+      type: "web"
+    });
+    return (j.rows || []).map((row: any) => ({
+      query: row.keys?.[0] || "",
+      clicks: Number(row.clicks || 0),
+      impressions: Number(row.impressions || 0),
+      ctr: Number(row.ctr || 0),
+      position: Number(row.position || 0),
+    }));
+  } catch {
+    return [];
   }
-
-  // Shape: { rows: [{ keys:["keyword"], clicks, impressions, ctr, position }, ...] }
-  return res.json();
 }
