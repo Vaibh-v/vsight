@@ -7,8 +7,8 @@ function lastNDays(days: number) {
   const end = new Date();
   const start = new Date();
   start.setDate(end.getDate() - (days - 1));
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  return { start: iso(start), end: iso(end) };
+  const toISO = (d: Date) => d.toISOString().slice(0, 10);
+  return { start: toISO(start), end: toISO(end) };
 }
 
 export default function Tracker() {
@@ -25,7 +25,7 @@ export default function Tracker() {
   const start = dateRange?.start;
   const end = dateRange?.end;
 
-  const { data: gscSites } = useSWR(status === "authenticated" ? "/api/gsc/sites" : null);
+  const { data: gscSites } = useSWR(status === "authenticated" ? "/api/google/gsc/sites" : null);
 
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -47,8 +47,26 @@ export default function Tracker() {
     }
   };
 
+  const download = () => {
+    const header = ["query", "clicks", "impressions", "ctr", "position"];
+    const lines = [header.join(",")].concat(
+      rows.map((r) => [r.query, r.clicks, r.impressions, r.ctr, r.position].join(","))
+    );
+    const csv = lines.join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `vsight-top10-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   if (status !== "authenticated") {
-    return <main className="max-w-5xl mx-auto p-6">Please sign in on the <a className="underline" href="/connections">Connections</a> page.</main>;
+    return (
+      <main className="max-w-5xl mx-auto p-6">
+        Please sign in on the <a className="underline" href="/connections">Connections</a> page.
+      </main>
+    );
   }
 
   const gscOptions = (gscSites?.sites || []) as Array<{ siteUrl: string }>;
@@ -75,13 +93,20 @@ export default function Tracker() {
         </div>
 
         <div className="flex gap-2">
-          <button onClick={() => setSelections({ dateRange: lastNDays(28) })} className="px-3 py-2 border rounded">Last 28 days</button>
-          <button onClick={() => setSelections({ dateRange: lastNDays(90) })} className="px-3 py-2 border rounded">Last 90 days</button>
+          <button onClick={() => setSelections({ dateRange: lastNDays(28) as any })} className="px-3 py-2 border rounded">
+            Last 28 days
+          </button>
+          <button onClick={() => setSelections({ dateRange: lastNDays(90) as any })} className="px-3 py-2 border rounded">
+            Last 90 days
+          </button>
         </div>
 
         <div className="flex gap-2 justify-end">
           <button onClick={run} disabled={!canRun || loading} className="px-4 py-2 rounded bg-indigo-600 text-white disabled:opacity-50">
             {loading ? "Running…" : "Run"}
+          </button>
+          <button onClick={download} disabled={!rows.length} className="px-4 py-2 rounded border">
+            Download CSV
           </button>
         </div>
       </div>
@@ -99,9 +124,7 @@ export default function Tracker() {
           </thead>
           <tbody>
             {!rows.length ? (
-              <tr>
-                <td className="p-3 text-gray-500" colSpan={5}>Run the tracker to see Top-10 queries.</td>
-              </tr>
+              <tr><td className="p-3 text-gray-500" colSpan={5}>Run the tracker to see Top-10 queries.</td></tr>
             ) : (
               rows.map((r, i) => (
                 <tr key={i} className={i % 2 ? "bg-white" : "bg-gray-50/50"}>
