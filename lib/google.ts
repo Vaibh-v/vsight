@@ -363,3 +363,24 @@ export async function gbpKeywordsLast3M(
 
   return { rows };
 }
+// ===== Compatibility aliases (keep at bottom) =====
+
+// If your canonical function is gscListSites(...) then expose it as gscSites too.
+export { gscListSites as gscSites };
+
+// Some routes used an older name `gscQuery` or an object-arg variant of top queries.
+// Wrap to a stable signature.
+export async function gscTopQueriesObj(
+  accessToken: string,
+  siteUrl: string,
+  opts: { startDate: string; endDate: string; rowLimit?: number }
+) {
+  return gscTopQueries(accessToken, siteUrl, opts.startDate, opts.endDate, opts.rowLimit);
+}
+// Export both old names so *any* existing route compiles.
+export { gscTopQueriesObj as gscTopQueriesObject, gscTopQueriesObj as gscQuery };
+
+// Drive/Sheets legacy names that some routes referenced
+// (Only keep these if your file already defines the canonical functions they alias to.)
+export { driveFindOrCreateSpreadsheet, sheetsGet, sheetsAppend };
+export { gaRunReport, gaListProperties, gscTimeseriesClicks, gscTopQueries, gbpListLocations };
