@@ -13,13 +13,14 @@ function lastNDays(days: number) {
   const end = new Date();
   const start = new Date();
   start.setDate(end.getDate() - (days - 1));
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  return { start: iso(start), end: iso(end) };
+  const toISO = (d: Date) => d.toISOString().slice(0, 10);
+  return { start: toISO(start), end: toISO(end) };
 }
 
 export default function Dashboard() {
   const { status } = useSession();
   const { ga4PropertyId, gscSiteUrl, dateRange, setSelections } = useAppState();
+
   useEffect(() => {
     if (!dateRange) {
       const r = lastNDays(28);
@@ -31,7 +32,7 @@ export default function Dashboard() {
   const end = dateRange?.end;
 
   const { data: gaProps } = useSWR(status === "authenticated" ? "/api/google/ga/properties" : null);
-  const { data: gscSites } = useSWR(status === "authenticated" ? "/api/gsc/sites" : null);
+  const { data: gscSites } = useSWR(status === "authenticated" ? "/api/google/gsc/sites" : null);
 
   const { data: gaSeries } = useSWR(
     status === "authenticated" && ga4PropertyId && start && end
@@ -53,17 +54,22 @@ export default function Dashboard() {
     (gscSeries?.data || []).forEach((r: any) => {
       const row = map.get(r.date) || { date: r.date };
       row.clicks = r.clicks ?? 0;
-      row.ctr = Number(((r.ctr ?? 0) * 100).toFixed(2));
+      row.impressions = r.impressions ?? 0;
+      row.ctr = typeof r.ctr === "number" ? r.ctr : 0;
+      row.position = typeof r.position === "number" ? r.position : 0;
       map.set(r.date, row);
     });
     return Array.from(map.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
   }, [gaSeries, gscSeries]);
 
-  const [insight, setInsight] = useState("");
+  const [insight, setInsight] = useState<string>("");
   useEffect(() => {
     (async () => {
-      if (!merged.length) { setInsight(""); return; }
-      const r = await fetch("/api/insights/summary", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: merged }) });
+      if (!merged?.length) { setInsight(""); return; }
+      const r = await fetch("/api/insights/summary", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: merged }),
+      });
       const j = await r.json();
       setInsight(j.summary || "");
     })();
@@ -118,7 +124,7 @@ export default function Dashboard() {
           <label className="text-sm text-gray-600">Date range</label>
           <div className="mt-1 flex gap-2">
             {PRESETS.map((p) => (
-              <button key={p.days} onClick={() => handlePreset(p.days)} className="px-3 py-2 rounded border">
+              <button key={p.days} onClick={() => handlePreset(p.days)} className="px-3 py-2 border rounded">
                 {p.label}
               </button>
             ))}
@@ -134,7 +140,9 @@ export default function Dashboard() {
 
       <div className="border rounded-lg p-4">
         <h2 className="font-medium mb-2">AI Insight</h2>
-        <div className="prose text-sm whitespace-pre-wrap">{insight || "Select a GA4 property and GSC site to see insights."}</div>
+        <div className="prose text-sm whitespace-pre-wrap">
+          {insight || "Select a GA4 property and GSC site to see insights."}
+        </div>
       </div>
     </main>
   );
