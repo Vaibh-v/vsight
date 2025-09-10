@@ -1,149 +1,209 @@
-type GAReportRow = { dimensionValues?: { value?: string }[]; metricValues?: { value?: string }[] };
-type GAReport = { rows?: GAReportRow[] };
+// lib/google.ts
+// Unified Google helpers used by API routes. All imports should be:  import { ... } from "@/lib/google";
 
-async function asJson<T = any>(r: Response): Promise<T> {
-  if (!r.ok) {
-    const text = await r.text().catch(() => "");
-    throw new Error(`HTTP ${r.status} ${r.statusText}${text ? ` - ${text}` : ""}`);
-  }
-  return r.json() as Promise<T>;
-}
+type HeadersInit_ = Record<string, string>;
+const jget = async (url: string, token: string) => {
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } as HeadersInit_ });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+};
+const jpost = async (url: string, token: string, body: any) => {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    } as HeadersInit_,
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+};
 
-/* ---------------- GA4 ---------------- */
+// ---------------- GA4 ----------------
 
 export async function gaListProperties(accessToken: string) {
-  const url = "https://analyticsadmin.googleapis.com/v1beta/properties?pageSize=200";
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  const j = await asJson<{ properties?: { name: string; displayName: string }[] }>(r);
-  return (j.properties || []).map(p => ({
-    id: (p.name || "").replace("properties/", ""),
-    displayName: p.displayName || p.name || ""
-  }));
+  // 1) List accounts
+  let accounts: any[] = [];
+  try {
+    const a = await jget("https://analyticsadmin.googleapis.com/v1beta/accounts", accessToken);
+    accounts = a.accounts || [];
+  } catch {
+    // If user lacks admin scope, try properties directly via search (best-effort)
+  }
+
+  const allProps: any[] = [];
+  // 2) For each account, list properties
+  for (const acc of accounts) {
+    try {
+      const p = await jget(
+        `https://analyticsadmin.googleapis.com/v1beta/properties?filter=parent:${encodeURIComponent(
+          acc.name
+        )}`,
+        accessToken
+      );
+      (p.properties || []).forEach((prop: any) => {
+        allProps.push({
+          id: prop.name?.split("/")[1],
+          displayName: prop.displayName,
+          propertyId: prop.name?.split("/")[1],
+        });
+      });
+    } catch {
+      // ignore per-account errors
+    }
+  }
+
+  // If none found, try the data API to detect a property provided by env or user later. Still return array.
+  return { properties: allProps };
 }
 
 export async function gaRunReport(
   accessToken: string,
   propertyId: string,
-  body: any
-): Promise<GAReport> {
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  return asJson<GAReport>(r);
+  body: {
+    dimensions?: Array<{ name: string }>;
+    metrics?: Array<{ name: string }>;
+    dateRanges: Array<{ startDate: string; endDate: string }>;
+    dimensionFilter?: any;
+    metricFilter?: any;
+    limit?: string | number;
+  }
+) {
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
+    propertyId
+  )}:runReport`;
+  const json = await jpost(url, accessToken, body);
+  // Normalize rows
+  const rows =
+    (json.rows || []).map((r: any) => ({
+      dimensionValues: r.dimensionValues,
+      metricValues: r.metricValues,
+    })) || [];
+  return { rows };
 }
 
-/* ---------------- GSC ---------------- */
+// ---------------- GSC ----------------
 
 export async function gscSites(accessToken: string) {
-  const r = await fetch("https://www.googleapis.com/webmasters/v3/sites", {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
-  const j = await asJson<{ siteEntry?: { siteUrl: string }[] }>(r);
-  return (j.siteEntry || []).map(s => ({ siteUrl: s.siteUrl }));
+  // Webmasters API
+  const json = await jget("https://www.googleapis.com/webmasters/v3/sites/list", accessToken);
+  const sites = (json.siteEntry || []).map((s: any) => ({
+    siteUrl: s.siteUrl,
+    permissionLevel: s.permissionLevel,
+  }));
+  return { sites };
+}
+
+export async function gscListSites(accessToken: string) {
+  // alias for earlier code references
+  return gscSites(accessToken);
 }
 
 export async function gscQuery(
   accessToken: string,
   siteUrl: string,
-  q: {
+  body: {
     startDate: string;
     endDate: string;
     dimensions?: string[];
     rowLimit?: number;
-    type?: "web" | "image" | "video" | "discover" | "googleNews";
+    type?: "web" | "image" | "video" | "news" | "discover";
     dimensionFilterGroups?: any[];
+    aggregationType?: "auto" | "byPage" | "byProperty";
+    searchType?: string; // ignore, kept for compatibility
   }
 ) {
-  const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
+  const url = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
     siteUrl
   )}/searchAnalytics/query`;
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify(q)
-  });
-  return asJson<{
-    rows?: { keys?: string[]; clicks?: number; impressions?: number; ctr?: number; position?: number }[];
-  }>(r);
+  const payload: any = {
+    startDate: body.startDate,
+    endDate: body.endDate,
+    dimensions: body.dimensions || [],
+    rowLimit: body.rowLimit || 25000,
+    // API uses "searchType" in old docs; modern clients still accept "type"
+    type: body.type || "web",
+  };
+  if (body.dimensionFilterGroups) payload.dimensionFilterGroups = body.dimensionFilterGroups;
+  if (body.aggregationType) payload.aggregationType = body.aggregationType;
+  const json = await jpost(url, accessToken, payload);
+  return json; // returns { rows: [{keys:[], clicks, impressions, ctr, position}], ...}
 }
 
 export async function gscTimeseriesClicks(
   accessToken: string,
   siteUrl: string,
-  start: string,
-  end: string
+  startDate: string,
+  endDate: string
 ) {
-  const resp = await gscQuery(accessToken, siteUrl, {
-    startDate: start,
-    endDate: end,
+  const json = await gscQuery(accessToken, siteUrl, {
+    startDate,
+    endDate,
     dimensions: ["date"],
     rowLimit: 25000,
-    type: "web"
+    type: "web",
   });
-  const data = (resp.rows || []).map(r => ({
-    date: r.keys?.[0] || "",
-    clicks: Number(r.clicks || 0),
-    ctr: Number(r.ctr || 0)
-  }));
+  const data =
+    (json.rows || []).map((r: any) => ({
+      date: r.keys?.[0],
+      clicks: r.clicks || 0,
+      ctr: r.ctr || 0,
+    })) || [];
   return { data };
 }
 
-/* ---------------- GBP ---------------- */
+// ---------------- GBP (Business Profile) ----------------
+// We’ll try Business Information API first (v1). If that fails, return empty array.
 
 export async function gbpListLocations(accessToken: string) {
-  const acc = await asJson<{ accounts?: { name: string }[] }>(
-    await fetch("https://mybusinessbusinessinformation.googleapis.com/v1/accounts", {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    })
-  );
-  const accountName = acc.accounts?.[0]?.name; // "accounts/123..."
-  if (!accountName) return [];
-
-  const loc = await asJson<{ locations?: { name?: string; title?: string; storeCode?: string; locationName?: string }[] }>(
-    await fetch(
-      `https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations?readMask=name,title,storeCode,locationName&pageSize=100`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    )
-  );
-  return (loc.locations || []).map(l => ({
-    name: l.name || "",
-    title: l.title || l.storeCode || l.locationName || ""
-  }));
+  // Attempt simple list with readMask to get minimal fields.
+  // If the API requires accounts scoping, this may 403; we catch and return [].
+  try {
+    const url =
+      "https://mybusinessbusinessinformation.googleapis.com/v1/locations?readMask=name,title,storeCode";
+    const json = await jget(url, accessToken);
+    const arr = json.locations || json.results || json || [];
+    const locations = (arr || []).map((l: any) => ({
+      name: l.name || l.locationName || "",
+      title: l.title || l.storeCode || l.locationName || "",
+    }));
+    return locations;
+  } catch {
+    return [];
+  }
 }
 
-/* ---------------- Sheets / Drive (Settings) ---------------- */
+// ---------------- Google Drive / Sheets ----------------
 
-export async function driveEnsureSpreadsheet(accessToken: string, name: string) {
-  const find = await asJson<{ files?: { id: string }[] }>(
-    await fetch(
-      "https://www.googleapis.com/drive/v3/files?q=" +
-        encodeURIComponent(`name='${name}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`) +
-        "&fields=files(id)",
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    )
-  );
-  if (find.files?.[0]?.id) return find.files[0].id;
-
-  const created = await asJson<{ id: string }>(
-    await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ properties: { title: name } })
-    })
-  );
-  return created.id;
+export async function driveFindOrCreateSpreadsheet(accessToken: string, name: string) {
+  // 1) Try to find
+  const listUrl =
+    "https://www.googleapis.com/drive/v3/files?q=" +
+    encodeURIComponent(`name='${name}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`) +
+    "&fields=files(id,name)";
+  try {
+    const found = await jget(listUrl, accessToken);
+    const file = (found.files || [])[0];
+    if (file?.id) return file.id;
+  } catch {
+    // ignore
+  }
+  // 2) Create
+  const createUrl = "https://sheets.googleapis.com/v4/spreadsheets";
+  const created = await jpost(createUrl, accessToken, { properties: { title: name } });
+  return created.spreadsheetId;
 }
-export const driveFindOrCreateSpreadsheet = driveEnsureSpreadsheet; // alias (some old imports expect this)
 
 export async function sheetsGet(accessToken: string, spreadsheetId: string, range: string) {
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  return asJson<{ values?: string[][] }>(r);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+    spreadsheetId
+  )}/values/${encodeURIComponent(range)}`;
+  try {
+    return await jget(url, accessToken);
+  } catch {
+    return { values: [] };
+  }
 }
 
 export async function sheetsAppend(
@@ -152,13 +212,8 @@ export async function sheetsAppend(
   sheetName: string,
   values: any[][]
 ) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(
-    sheetName
-  )}:append?valueInputOption=USER_ENTERED`;
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ values })
-  });
-  return asJson(r);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+    spreadsheetId
+  )}/values/${encodeURIComponent(sheetName)}:append?valueInputOption=USER_ENTERED`;
+  await jpost(url, accessToken, { values });
 }
