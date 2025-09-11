@@ -1,297 +1,281 @@
-// lib/google.ts
-// Central, tolerant wrappers around Google APIs used by VSight.
-// All functions accept simple primitives and return simple, predictable shapes
-// so your API routes don't need to know Google’s response formats.
+/* lib/google.ts
+   One canonical implementation with safe alias exports.
+   - No duplicate identifiers
+   - Legacy names kept via `export { A as B }` aliases at the bottom
+*/
 
-// ---------------------- tiny fetch helper ----------------------
-async function fetchJson<T = any>(
-  url: string,
-  init: RequestInit & { accessToken?: string } = {}
-): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(init.headers as any),
-  };
-  if (init.accessToken) headers.Authorization = `Bearer ${init.accessToken}`;
-  const res = await fetch(url, { ...init, headers });
-  const text = await res.text();
-  let json: any = null;
-  try { json = text ? JSON.parse(text) : null; } catch { /* keep raw text */ }
+type FetchOpts = {
+  method?: "GET" | "POST";
+  accessToken: string;
+  body?: any;
+  query?: Record<string, string | number | boolean | undefined>;
+};
+
+/** Small helper for authenticated Google API calls */
+async function fetchJson<T = any>(url: string, opts: FetchOpts): Promise<T> {
+  const { method = "GET", accessToken, body, query } = opts;
+  const q = query
+    ? "?" +
+      Object.entries(query)
+        .filter(([, v]) => v !== undefined && v !== null && v !== "")
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+        .join("&")
+    : "";
+  const res = await fetch(url + q, {
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
   if (!res.ok) {
-    const msg = (json && (json.error?.message || json.message)) || text || `HTTP ${res.status}`;
-    throw new Error(msg);
+    const txt = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status} ${res.statusText}: ${txt || "request failed"}`);
   }
-  return (json as T) ?? ({} as T);
+  return (await res.json().catch(() => ({}))) as T;
 }
 
-// ---------------------- GA4 Admin: list properties ----------------------
-/** List GA4 properties the user can see. Returns [{ name, title }] */
-export async function gaListProperties(accessToken: string): Promise<{ name: string; title: string }[]> {
+/* ======================================
+   Google Analytics 4 (Admin + Data API)
+   ====================================== */
+
+type GaRunReportOpts = {
+  dimensions?: ({ name: string } | string)[];
+  metrics?: ({ name: string } | string)[];
+  dateRanges?: { startDate: string; endDate: string }[];
+  dimensionFilter?: any;
+  metricFilter?: any;
+  limit?: number;
+  orderBys?: any[];
+};
+
+function normalizeNames(arr?: ({ name: string } | string)[]) {
+  if (!arr) return undefined;
+  return arr.map((x) => (typeof x === "string" ? { name: x } : x));
+}
+
+/** List GA4 properties for the user (flattened) */
+export async function gaListProperties(accessToken: string) {
+  // Best coverage via account summaries => contains property summaries
   const url = "https://analyticsadmin.googleapis.com/v1beta/accountSummaries";
   const data = await fetchJson<any>(url, { method: "GET", accessToken });
-  const summaries = Array.isArray(data?.accountSummaries) ? data.accountSummaries : [];
-  const out: { name: string; title: string }[] = [];
-  for (const acc of summaries) {
+  const list: { id: string; name: string }[] = [];
+
+  const sums = Array.isArray(data?.accountSummaries) ? data.accountSummaries : [];
+  for (const acc of sums) {
     const props = Array.isArray(acc?.propertySummaries) ? acc.propertySummaries : [];
     for (const p of props) {
-      out.push({ name: p?.property || "", title: p?.displayName || p?.property || "" });
+      if (p?.property) {
+        const id = String(p.property).replace("properties/", "");
+        list.push({ id, name: p.displayName || id });
+      }
     }
   }
-  return out;
+  return list;
 }
 
-// ---------------------- GA4 Data API: runReport ----------------------
-type GaRunReportRequest = {
-  dateRanges: { startDate: string; endDate: string }[];
-  dimensions?: { name: string }[];
-  metrics?: { name: string }[];
-  limit?: string | number;
-};
+/** Run a GA4 report */
 export async function gaRunReport(
   accessToken: string,
   propertyId: string,
-  body: GaRunReportRequest
-): Promise<{ rows: { dimensionValues?: { value?: string }[]; metricValues?: { value?: string }[] }[] }> {
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`;
-  const data = await fetchJson<any>(url, {
-    method: "POST",
-    accessToken,
-    body: JSON.stringify(body),
-  });
-  return { rows: Array.isArray(data?.rows) ? data.rows : [] };
-}
-
-// ---------------------- Search Console: list sites ----------------------
-/** Returns { sites: { siteUrl }[] } */
-export async function gscSites(accessToken: string): Promise<{ sites: { siteUrl: string }[] }> {
-  const data = await fetchJson<any>("https://www.googleapis.com/webmasters/v3/sites", {
-    method: "GET",
-    accessToken,
-  });
-  const siteEntries = Array.isArray(data?.siteEntry) ? data.siteEntry : [];
-  return { sites: siteEntries.map((s: any) => ({ siteUrl: String(s?.siteUrl || "") })) };
-}
-
-// ---------------------- Search Console: top queries ----------------------
-type GscTopQueryOpts = {
-  startDate: string;
-  endDate: string;
-  rowLimit?: number;
-  // tolerate extra keys used by older code; ignored safely:
-  dimensions?: string[];
-  type?: "web" | "image" | "video" | string;
-  dimensionFilterGroups?: any;
-};
-export async function gscTopQueries(
-  accessToken: string,
-  siteUrl: string,
-  opts: GscTopQueryOpts
-): Promise<{ rows: { query: string; clicks: number; impressions: number; ctr: number; position: number; page?: string }[] }> {
-  const {
-    startDate,
-    endDate,
-    rowLimit = 1000,
-    type = "web",
-    // old code may pass these; they’re ignored because Sitemaps v3 “searchanalytics/query” expects filters differently
-    // but we accept them so TS doesn't fail.
-  } = opts;
-
-  const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
-  const requestBody = {
-    startDate,
-    endDate,
-    dimensions: ["query"], // fixed to queries
-    searchType: type,
-    rowLimit,
+  opts: GaRunReportOpts
+) {
+  const body = {
+    dimensions: normalizeNames(opts.dimensions),
+    metrics: normalizeNames(opts.metrics),
+    dateRanges: opts.dateRanges,
+    dimensionFilter: opts.dimensionFilter,
+    metricFilter: opts.metricFilter,
+    limit: opts.limit,
+    orderBys: opts.orderBys,
   };
-  const data = await fetchJson<any>(url, {
-    method: "POST",
-    accessToken,
-    body: JSON.stringify(requestBody),
-  });
-
-  const rows = Array.isArray(data?.rows) ? data.rows : [];
-  return {
-    rows: rows.map((r: any) => ({
-      query: String(r?.keys?.[0] ?? ""),
-      clicks: Number(r?.clicks ?? 0),
-      impressions: Number(r?.impressions ?? 0),
-      ctr: Number(r?.ctr ?? 0),
-      position: Number(r?.position ?? 0),
-      page: r?.keys?.[1], // just in case caller added "page" later; harmless otherwise
-    })),
-  };
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
+    propertyId
+  )}:runReport`;
+  return await fetchJson<any>(url, { method: "POST", accessToken, body });
 }
-// ---------------------- Search Console: generic query (date/query/page) ----------------------
+
+/* ======================================
+   Google Search Console (Webmasters API)
+   ====================================== */
+
+export async function gscSites(accessToken: string) {
+  const url = "https://www.googleapis.com/webmasters/v3/sites";
+  const data = await fetchJson<any>(url, { method: "GET", accessToken });
+  const list = Array.isArray(data?.siteEntry) ? data.siteEntry : [];
+  return list.map((s: any) => ({
+    siteUrl: s?.siteUrl || "",
+    permissionLevel: s?.permissionLevel || "",
+  }));
+}
+
 type GscQueryOpts = {
   startDate: string;
   endDate: string;
-  dimensions?: ("date" | "query" | "page" | string)[];
+  dimensions?: string[];
   rowLimit?: number;
+  startRow?: number;
   type?: "web" | "image" | "video" | string;
-  dimensionFilterGroups?: any; // tolerated/no-op passthrough for old callers
+  dimensionFilterGroups?: any[];
 };
 
-/**
- * Generic Search Console query wrapper that matches older route usages.
- * Returns an ARRAY of normalized rows so `for (const r of gscRows)` works.
- *
- * - If dimensions include "date": rows => { date, clicks, impressions, ctr, position }
- * - If dimensions include "query": rows => { query, clicks, impressions, ctr, position, page? }
- * - If dimensions include "page":  rows => { page, clicks, impressions, ctr, position, query? }
- */
-export async function gscQuery(
+/** Low-level Search Analytics query */
+export async function gscSearchAnalyticsQuery(
   accessToken: string,
   siteUrl: string,
   opts: GscQueryOpts
-): Promise<
-  Array<
-    | { date: string; clicks: number; impressions: number; ctr: number; position: number }
-    | { query: string; clicks: number; impressions: number; ctr: number; position: number; page?: string }
-    | { page: string; clicks: number; impressions: number; ctr: number; position: number; query?: string }
-  >
-> {
-  const {
-    startDate,
-    endDate,
-    dimensions = ["date"],
-    rowLimit = 1000,
-    type = "web",
-  } = opts;
+) {
+  const body: any = {
+    startDate: opts.startDate,
+    endDate: opts.endDate,
+    rowLimit: opts.rowLimit,
+    startRow: opts.startRow,
+    type: opts.type || "web",
+  };
+  if (opts.dimensions?.length) body.dimensions = opts.dimensions;
+  if (opts.dimensionFilterGroups) body.dimensionFilterGroups = opts.dimensionFilterGroups;
 
-  const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
+  const url = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
     siteUrl
   )}/searchAnalytics/query`;
+  return await fetchJson<any>(url, { method: "POST", accessToken, body });
+}
 
-  const body = {
-    startDate,
-    endDate,
-    dimensions,
-    searchType: type,
-    rowLimit,
-  };
-
-  const data = await fetchJson<any>(url, {
-    method: "POST",
-    accessToken,
-    body: JSON.stringify(body),
-  });
-
-  const rows = Array.isArray(data?.rows) ? data.rows : [];
-
-  // Normalize based on requested dimensions
-  const hasDate = dimensions.includes("date");
-  const hasQuery = dimensions.includes("query");
-  const hasPage = dimensions.includes("page");
-
-  return rows.map((r: any) => {
-    const keys = Array.isArray(r?.keys) ? r.keys : [];
-    const clicks = Number(r?.clicks ?? 0);
-    const impressions = Number(r?.impressions ?? 0);
-    const ctr = Number(r?.ctr ?? 0);
-    const position = Number(r?.position ?? 0);
-
-    if (hasDate) {
-      const date = String(keys[dimensions.indexOf("date")] || "");
-      return { date, clicks, impressions, ctr, position };
-    }
-    if (hasQuery && hasPage) {
-      const query = String(keys[dimensions.indexOf("query")] || "");
-      const page = String(keys[dimensions.indexOf("page")] || "");
-      return { query, page, clicks, impressions, ctr, position };
-    }
-    if (hasQuery) {
-      const query = String(keys[dimensions.indexOf("query")] || "");
-      return { query, clicks, impressions, ctr, position };
-    }
-    if (hasPage) {
-      const page = String(keys[dimensions.indexOf("page")] || "");
-      return { page, clicks, impressions, ctr, position };
-    }
-    // Fallback: treat first key as a label
-    return { query: String(keys[0] || ""), clicks, impressions, ctr, position };
+/** Convenience wrapper for top queries */
+export async function gscTopQueries(
+  accessToken: string,
+  siteUrl: string,
+  opts: { startDate: string; endDate: string; rowLimit?: number; type?: string; dimensionFilterGroups?: any[] }
+) {
+  return await gscSearchAnalyticsQuery(accessToken, siteUrl, {
+    ...opts,
+    dimensions: ["query"],
   });
 }
 
-// ---------------------- GBP: list locations ----------------------
-/** Minimal GBP locations. Returns { locations: [{ name, title }] } */
-export async function gbpListLocations(
-  accessToken: string
-): Promise<{ locations: { name: string; title: string }[] }> {
-  // Try the My Business Business Information API v1
-  const data = await fetchJson<any>("https://mybusinessbusinessinformation.googleapis.com/v1/accounts/-/locations", {
-    method: "GET",
-    accessToken,
+/** Convenience wrapper for date timeseries (clicks etc.) */
+export async function gscTimeseries(
+  accessToken: string,
+  siteUrl: string,
+  opts: { startDate: string; endDate: string; rowLimit?: number; type?: string }
+) {
+  return await gscSearchAnalyticsQuery(accessToken, siteUrl, {
+    ...opts,
+    dimensions: ["date"],
   });
+}
 
-  const arr = Array.isArray(data?.locations) ? data.locations : Array.isArray(data?.results) ? data.results : [];
-  const locations = arr.map((l: any) => ({
-    name: String(l?.name || l?.locationName || ""),
-    title: String(l?.title || l?.storeCode || l?.locationName || ""),
+/* ======================================
+   Google Business Profile (GBP)
+   ====================================== */
+
+/** List GBP locations the token can see, minimal shape */
+export async function gbpListLocations(accessToken: string) {
+  // There are multiple surfaces; we try the Business Info API.
+  // If response differs, we normalize to { name, title }[]
+  // NOTE: Actual availability depends on scopes/permissions.
+  const primaryUrl = "https://mybusinessbusinessinformation.googleapis.com/v1/locations";
+  const data = await fetchJson<any>(primaryUrl, { method: "GET", accessToken }).catch(() => ({}));
+
+  const raw = Array.isArray(data?.locations)
+    ? data.locations
+    : Array.isArray(data?.results)
+    ? data.results
+    : [];
+
+  return raw.map((l: any) => ({
+    name: l?.name || l?.locationName || "",
+    title: l?.title || l?.locationName || l?.name || "",
   }));
-  return { locations };
 }
 
-// ---------------------- Drive & Sheets helpers ----------------------
-/** Find a spreadsheet by name in root; if missing, create it. Returns { id, name }. */
+/* ======================================
+   Google Drive + Sheets (for Tracker/Vault)
+   ====================================== */
+
+/** Find a spreadsheet by title in Drive; if absent, create. Returns the spreadsheetId (string). */
 export async function driveFindOrCreateSpreadsheet(
   accessToken: string,
-  name: string
-): Promise<{ id: string; name: string }> {
-  // Search by name
-  const query = encodeURIComponent(`name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.spreadsheet' and 'root' in parents and trashed=false`);
-  const search = await fetchJson<any>(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name)`, {
+  title: string
+): Promise<string> {
+  // Search in Drive
+  const searchUrl = "https://www.googleapis.com/drive/v3/files";
+  const q = `mimeType='application/vnd.google-apps.spreadsheet' and name='${title.replace(/'/g, "\\'")}' and trashed=false`;
+  const search = await fetchJson<any>(searchUrl, {
     method: "GET",
     accessToken,
+    query: { q, fields: "files(id,name)" },
   });
-  const hit = Array.isArray(search?.files) && search.files[0];
-  if (hit?.id) return { id: hit.id, name: hit.name };
+  const existing = Array.isArray(search?.files) ? search.files : [];
+  if (existing.length > 0 && existing[0]?.id) return String(existing[0].id);
 
-  // Create
-  const created = await fetchJson<any>("https://sheets.googleapis.com/v4/spreadsheets", {
+  // Create via Sheets
+  const createUrl = "https://sheets.googleapis.com/v4/spreadsheets";
+  const created = await fetchJson<any>(createUrl, {
     method: "POST",
     accessToken,
-    body: JSON.stringify({ properties: { title: name } }),
+    body: { properties: { title } },
   });
-  return { id: String(created?.spreadsheetId || ""), name };
+  const spreadsheetId = created?.spreadsheetId || created?.id;
+  if (!spreadsheetId) throw new Error("Failed to create spreadsheet");
+  return String(spreadsheetId);
 }
 
-/** Read a range. Returns raw values ([][]) */
+/** Read a range from a spreadsheet */
 export async function sheetsGet(
   accessToken: string,
   spreadsheetId: string,
-  rangeA1: string
-): Promise<{ values: any[][] }> {
-  const data = await fetchJson<any>(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(rangeA1)}`, {
-    method: "GET",
-    accessToken,
-  });
-  return { values: Array.isArray(data?.values) ? data.values : [] };
+  range: string
+) {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+    spreadsheetId
+  )}/values/${encodeURIComponent(range)}`;
+  return await fetchJson<any>(url, { method: "GET", accessToken });
 }
 
-/** Append rows to a sheet tab. */
+/** Append rows to a sheet (range is just the sheet/tab name) */
 export async function sheetsAppend(
   accessToken: string,
   spreadsheetId: string,
   sheetName: string,
   values: any[][]
-): Promise<{ updates?: any }> {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(sheetName)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-  const data = await fetchJson<any>(url, {
+) {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+    spreadsheetId
+  )}/values/${encodeURIComponent(sheetName)}:append`;
+  return await fetchJson<any>(url, {
     method: "POST",
     accessToken,
-    body: JSON.stringify({ values }),
+    query: { valueInputOption: "RAW", insertDataOption: "INSERT_ROWS" },
+    body: { values },
   });
-  return { updates: data?.updates };
 }
 
-// ---------------------- Utility used by tracker (safe no-op) ----------------------
-/** Best-effort: return top SERP url for a query. Stubbed to empty string in server builds. */
-export async function serpTopUrl(_q: string): Promise<string> {
-  // Keep as a stub to avoid runtime network surprises during build.
+/* ======================================
+   Misc helpers used around the app
+   ====================================== */
+
+/** Optional SERP snapshot helper; safe fallback returns empty string */
+export async function serpTopUrl(_query: string): Promise<string> {
+  // Intentionally returns "" to avoid external dependency/rate limits in build.
+  // You can wire this to a real SERP API later.
   return "";
 }
-// --- Compatibility aliases so old route names keep working ---
-export const gscTimeseriesClicks = gscTimeseries;          // alias
-export const gscListSites = gscSites;                      // alias
-export const gscQuery = gscSearchAnalyticsQuery;           // alias
+
+/* ======================================
+   Compatibility alias exports (NO duplicates)
+   ====================================== */
+// GA: no legacy aliases needed beyond function names above
+
+// GSC legacy names used around the repo:
+export { gscSearchAnalyticsQuery as gscQuery };
+export { gscSites as gscListSites };
+export { gscTimeseries as gscTimeseriesClicks };
+
+// GBP: the repo imports gbpListLocations directly (already exported)
+
+// Drive/Sheets: names already match what routes import
+
+// Helper export (some files import it)
+export { fetchJson };
