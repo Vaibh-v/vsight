@@ -291,3 +291,7 @@ export async function serpTopUrl(_q: string): Promise<string> {
   // Keep as a stub to avoid runtime network surprises during build.
   return "";
 }
+// --- Compatibility aliases so old route names keep working ---
+export const gscTimeseriesClicks = gscTimeseries;          // alias
+export const gscListSites = gscSites;                      // alias
+export const gscQuery = gscSearchAnalyticsQuery;           // alias
