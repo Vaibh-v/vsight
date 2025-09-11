@@ -244,3 +244,25 @@ export async function sheetsGet(
   const data = await fetchJson(url, { method: "GET", accessToken });
   return Array.isArray(data?.values) ? (data.values as string[][]) : [];
 }
+// --- ADD to lib/google.ts (under the Sheets section) ---
+
+/**
+ * Sheets values append: appends rows to a range (A1). Returns the API response.
+ * Scope needed: https://www.googleapis.com/auth/spreadsheets
+ */
+export async function sheetsAppend(
+  accessToken: string,
+  spreadsheetId: string,
+  rangeA1: string,
+  values: Array<Array<string | number | boolean>>,
+  valueInputOption: "RAW" | "USER_ENTERED" = "RAW"
+): Promise<any> {
+  const encRange = encodeURIComponent(rangeA1);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encRange}:append?valueInputOption=${valueInputOption}`;
+
+  return fetchJson(url, {
+    method: "POST",
+    accessToken,
+    body: { values },
+  });
+}
