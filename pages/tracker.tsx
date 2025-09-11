@@ -1,144 +1,85 @@
-import { useSession } from "next-auth/react";
-import useSWR from "swr";
-import { useEffect, useState } from "react";
-import { useAppState } from "@/components/state/AppStateProvider";
+import React, { useEffect, useState } from "react";
 
-function lastNDays(days: number) {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - (days - 1));
-  const toISO = (d: Date) => d.toISOString().slice(0, 10);
-  return { start: toISO(start), end: toISO(end) };
-}
-
-export default function Tracker() {
-  const { status } = useSession();
-  const { gscSiteUrl, dateRange, setSelections } = useAppState();
+export default function OrganicTracker() {
+  const [sites, setSites] = useState<any[]>([]);
+  const [siteUrl, setSiteUrl] = useState<string>("");
+  const [rows, setRows] = useState<any[]>([]);
 
   useEffect(() => {
-    if (!dateRange) {
-      const r = lastNDays(28);
-      setSelections({ dateRange: { start: r.start, end: r.end } });
-    }
-  }, [dateRange, setSelections]);
-
-  const start = dateRange?.start;
-  const end = dateRange?.end;
-
-  const { data: gscSites } = useSWR(status === "authenticated" ? "/api/google/gsc/sites" : null);
-
-  const [rows, setRows] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const canRun = !!(gscSiteUrl && start && end);
-
-  const run = async () => {
-    if (!canRun) return;
-    setLoading(true);
-    setRows([]);
-    try {
-      const res = await fetch(`/api/gsc/top10?siteUrl=${encodeURIComponent(gscSiteUrl!)}&start=${start}&end=${end}`);
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || "Failed");
-      setRows(j.rows || []);
-    } catch (e: any) {
-      alert(e.message || "Unexpected error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const download = () => {
-    const header = ["query", "clicks", "impressions", "ctr", "position"];
-    const lines = [header.join(",")].concat(
-      rows.map((r) => [r.query, r.clicks, r.impressions, r.ctr, r.position].join(","))
-    );
-    const csv = lines.join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `vsight-top10-${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-
-  if (status !== "authenticated") {
-    return (
-      <main className="max-w-5xl mx-auto p-6">
-        Please sign in on the <a className="underline" href="/connections">Connections</a> page.
-      </main>
-    );
-  }
-
-  const gscOptions = (gscSites?.sites || []) as Array<{ siteUrl: string }>;
+    (async () => {
+      const s = await fetch("/api/gsc/sites").then((r) => r.json());
+      setSites(s?.sites || []);
+    })();
+  }, []);
 
   return (
-    <main className="max-w-6xl mx-auto p-6 space-y-6">
-      <h1 className="text-2xl font-semibold">Organic Tracker</h1>
+    <div className="p-8">
+      <h1 className="text-xl font-semibold mb-4">Organic Tracker</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-        <div>
-          <label className="text-sm text-gray-600">GSC Site</label>
-          <select
-            className="mt-1 w-full border rounded px-3 py-2"
-            value={gscSiteUrl || ""}
-            onChange={(e) => setSelections({ gscSiteUrl: e.target.value })}
-          >
-            <option value="">Select GSC site…</option>
-            {gscOptions.map((s) => (
-              <option key={s.siteUrl} value={s.siteUrl}>{s.siteUrl}</option>
-            ))}
-          </select>
+      <div className="flex gap-4 items-center mb-4">
+        <select
+          className="border rounded px-3 py-2"
+          value={siteUrl}
+          onChange={(e) => setSiteUrl(e.target.value)}
+        >
+          <option value="">Select GSC site…</option>
+          {sites.map((s) => (
+            <option key={s.siteUrl} value={s.siteUrl}>
+              {s.siteUrl}
+            </option>
+          ))}
+        </select>
 
-          {start && end && <p className="text-xs text-gray-500 mt-2">Date range: {start} → {end}</p>}
-        </div>
-
-        <div className="flex gap-2">
-          <button onClick={() => setSelections({ dateRange: lastNDays(28) as any })} className="px-3 py-2 border rounded">
-            Last 28 days
-          </button>
-          <button onClick={() => setSelections({ dateRange: lastNDays(90) as any })} className="px-3 py-2 border rounded">
-            Last 90 days
-          </button>
-        </div>
-
-        <div className="flex gap-2 justify-end">
-          <button onClick={run} disabled={!canRun || loading} className="px-4 py-2 rounded bg-indigo-600 text-white disabled:opacity-50">
-            {loading ? "Running…" : "Run"}
-          </button>
-          <button onClick={download} disabled={!rows.length} className="px-4 py-2 rounded border">
-            Download CSV
-          </button>
-        </div>
+        <button
+          className="px-3 py-2 rounded bg-violet-600 text-white disabled:opacity-50"
+          disabled={!siteUrl}
+          onClick={async () => {
+            const params = new URLSearchParams({
+              siteUrl,
+              startDate: "2025-08-01",
+              endDate: "2025-09-10",
+              rowLimit: "50",
+            }).toString();
+            const r = await fetch(`/api/google/gsc/top-queries?${params}`).then((x) => x.json());
+            setRows(r?.rows || []);
+          }}
+        >
+          Run
+        </button>
       </div>
 
-      <div className="border rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="overflow-auto">
+        <table className="min-w-[700px] w-full text-sm border">
           <thead className="bg-gray-50">
             <tr>
-              <th className="p-2 text-left">Query</th>
-              <th className="p-2 text-right">Clicks</th>
-              <th className="p-2 text-right">Impr.</th>
-              <th className="p-2 text-right">CTR</th>
+              <th className="p-2 text-left border-r">Query</th>
+              <th className="p-2 text-right border-r">Clicks</th>
+              <th className="p-2 text-right border-r">Impr.</th>
+              <th className="p-2 text-right border-r">CTR</th>
               <th className="p-2 text-right">Avg Pos</th>
             </tr>
           </thead>
           <tbody>
-            {!rows.length ? (
-              <tr><td className="p-3 text-gray-500" colSpan={5}>Run the tracker to see Top-10 queries.</td></tr>
+            {rows.length === 0 ? (
+              <tr>
+                <td className="p-3 text-gray-500" colSpan={5}>
+                  Run the tracker to see Top-10 queries.
+                </td>
+              </tr>
             ) : (
               rows.map((r, i) => (
-                <tr key={i} className={i % 2 ? "bg-white" : "bg-gray-50/50"}>
-                  <td className="p-2">{r.query}</td>
-                  <td className="p-2 text-right">{r.clicks}</td>
-                  <td className="p-2 text-right">{r.impressions}</td>
-                  <td className="p-2 text-right">{(Number(r.ctr) * 100).toFixed(2)}%</td>
-                  <td className="p-2 text-right">{Number(r.position).toFixed(1)}</td>
+                <tr key={i} className="border-t">
+                  <td className="p-2 border-r">{r.query}</td>
+                  <td className="p-2 text-right border-r">{r.clicks}</td>
+                  <td className="p-2 text-right border-r">{r.impressions}</td>
+                  <td className="p-2 text-right border-r">{(Number(r.ctr || 0) * 100).toFixed(2)}%</td>
+                  <td className="p-2 text-right">{Number(r.position || 0).toFixed(1)}</td>
                 </tr>
               ))
             )}
           </tbody>
         </table>
       </div>
-    </main>
+    </div>
   );
 }
