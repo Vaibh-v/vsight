@@ -1,6 +1,6 @@
 // lib/google.ts
 // Centralized Google API helpers used by API routes.
-// All exports here are unique (no duplicate names) and strictly typed.
+// All exports here are unique and strictly typed.
 
 type Json = any;
 
@@ -33,8 +33,6 @@ async function fetchJson(
 export async function gaListProperties(
   accessToken: string
 ): Promise<Array<{ id: string; displayName: string }>> {
-  // Best coverage via Analytics Admin "accountSummaries"
-  // https://analyticsadmin.googleapis.com/v1beta/accountSummaries
   const url =
     "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200";
   const data = await fetchJson(url, { method: "GET", accessToken });
@@ -49,7 +47,6 @@ export async function gaListProperties(
       ? acc.propertySummaries
       : [];
     for (const p of props) {
-      // property "property" field is in the form "properties/123456789"
       const pid = String(p?.property || "").split("/").pop() || "";
       if (pid) out.push({ id: pid, displayName: String(p?.displayName || "") });
     }
@@ -84,7 +81,6 @@ export async function gaRunReport(
 export async function gscListSites(
   accessToken: string
 ): Promise<Array<{ siteUrl: string; permissionLevel?: string }>> {
-  // https://developers.google.com/webmaster-tools/search-console-api-original/v3/sites/list
   const url = "https://www.googleapis.com/webmasters/v3/sites";
   const data = await fetchJson(url, { method: "GET", accessToken });
 
@@ -95,7 +91,7 @@ export async function gscListSites(
   }));
 }
 
-/** Generic GSC query wrapper (flexible) */
+/** Generic GSC query wrapper */
 export async function gscQuery(
   accessToken: string,
   siteUrl: string,
@@ -122,7 +118,7 @@ export async function gscQuery(
   return fetchJson(url, { method: "POST", accessToken, body });
 }
 
-/** Convenience: Top queries in a date range */
+/** Convenience: Top queries */
 export async function gscTopQueries(
   accessToken: string,
   siteUrl: string,
@@ -150,7 +146,7 @@ export async function gscTopQueries(
   }));
 }
 
-/** Convenience: timeseries by date with clicks/impressions/ctr/position */
+/** Convenience: timeseries by date */
 export async function gscTimeseriesClicks(
   accessToken: string,
   siteUrl: string,
@@ -179,12 +175,6 @@ export async function gscTimeseriesClicks(
 // Google Business Profile (GBP)
 // =======================================
 
-/**
- * List GBP locations the user can access.
- * Requires scope: https://www.googleapis.com/auth/business.manage
- * API: My Business Business Information
- * https://mybusinessbusinessinformation.googleapis.com/v1/locations?readMask=name,title
- */
 export async function gbpListLocations(
   accessToken: string
 ): Promise<{ locations: Array<{ name: string; title: string }> }> {
@@ -199,4 +189,58 @@ export async function gbpListLocations(
   }));
 
   return { locations };
+}
+
+// =======================================
+// Google Drive + Google Sheets
+// =======================================
+
+/**
+ * Find a spreadsheet by name (optionally within a folder). If not found, create it.
+ * Returns: { id, name }
+ * Scopes needed: Drive file create/read (see note below).
+ */
+export async function driveFindOrCreateSpreadsheet(
+  accessToken: string,
+  name: string,
+  parentFolderId?: string
+): Promise<{ id: string; name: string }> {
+  // Search existing
+  // See: https://developers.google.com/drive/api/v3/search-files
+  const qParts = [`name = '${name.replace(/'/g, "\\'")}'`, `mimeType = 'application/vnd.google-apps.spreadsheet'`, "trashed = false"];
+  if (parentFolderId) qParts.push(`'${parentFolderId}' in parents`);
+  const q = encodeURIComponent(qParts.join(" and "));
+  const listUrl = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`;
+
+  const found = await fetchJson(listUrl, { method: "GET", accessToken });
+  const file = Array.isArray(found?.files) && found.files[0];
+  if (file?.id) return { id: String(file.id), name: String(file.name || name) };
+
+  // Create new spreadsheet file
+  // https://developers.google.com/drive/api/v3/reference/files/create
+  const createUrl = "https://www.googleapis.com/drive/v3/files";
+  const body: any = {
+    name,
+    mimeType: "application/vnd.google-apps.spreadsheet",
+  };
+  if (parentFolderId) body.parents = [parentFolderId];
+
+  const created = await fetchJson(createUrl, { method: "POST", accessToken, body });
+  return { id: String(created?.id || ""), name: String(created?.name || name) };
+}
+
+/**
+ * Sheets values get: read a range (A1 notation).
+ * Returns the raw array of arrays (values) or [].
+ * Scope needed: spreadsheets.readonly (or spreadsheets).
+ */
+export async function sheetsGet(
+  accessToken: string,
+  spreadsheetId: string,
+  rangeA1: string
+): Promise<string[][]> {
+  const encRange = encodeURIComponent(rangeA1);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encRange}`;
+  const data = await fetchJson(url, { method: "GET", accessToken });
+  return Array.isArray(data?.values) ? (data.values as string[][]) : [];
 }
