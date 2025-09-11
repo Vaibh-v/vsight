@@ -9,35 +9,29 @@ import { gaRunReport, gscQuery } from "@/lib/google";
  *  - GSC (clicks, impressions, ctr, position)
  *
  * Query params:
- *  - propertyId: GA4 property id (required for GA part)
- *  - siteUrl: GSC site url (optional; if missing, GSC part is skipped)
- *  - startDate, endDate (YYYY-MM-DD)
+ *  - propertyId: GA4 property id (optional; GA skipped if missing)
+ *  - siteUrl: GSC site url (optional; GSC skipped if missing)
+ *  - startDate, endDate (YYYY-MM-DD) — required
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.access_token) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
+    if (!token?.access_token) return res.status(401).json({ error: "Not authenticated" });
 
     const { propertyId, siteUrl, startDate, endDate } = (req.query || {}) as any;
     const accessToken = String(token.access_token);
 
-    // Basic input guardrails
     const start = String(startDate || "").trim();
     const end = String(endDate || "").trim();
-    if (!start || !end) {
-      return res.status(400).json({ error: "Missing startDate/endDate" });
-    }
+    if (!start || !end) return res.status(400).json({ error: "Missing startDate/endDate" });
 
-    // Prepare calls (GSC is optional)
     const wantGA = !!propertyId;
     const wantGSC = !!siteUrl;
 
     const gaPromise = wantGA
       ? gaRunReport(accessToken, String(propertyId), {
-          dimensions: ["date"],
-          metrics: ["sessions"],
+          dimensions: [{ name: "date" }],
+          metrics: [{ name: "sessions" }],
           dateRanges: [{ startDate: start, endDate: end }],
         })
       : Promise.resolve(null);
@@ -46,7 +40,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ? gscQuery(accessToken, String(siteUrl), {
           startDate: start,
           endDate: end,
-          dimensions: ["date"],
+          dimensions: ["date"], // our gscQuery accepts string names and normalizes to {date,...}
           rowLimit: 1000,
           type: "web",
         })
@@ -54,7 +48,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const [gaRep, gscRows] = await Promise.all([gaPromise, gscPromise]);
 
-    // Normalize GA
+    // ---- Normalize GA rows ----
     type GaRow = { date: string; sessions: number };
     const gaRows: GaRow[] = Array.isArray((gaRep as any)?.rows)
       ? (gaRep as any).rows.map((r: any) => ({
@@ -63,49 +57,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }))
       : [];
 
-    // gscQuery already returns a normalized array of rows:
-    // [{ date, clicks, impressions, ctr, position }]
+    // ---- Normalize GSC rows (already normalized by gscQuery) ----
     type GscRow = { date?: string; clicks: number; impressions: number; ctr: number; position: number };
     const gRows: GscRow[] = Array.isArray(gscRows) ? (gscRows as GscRow[]) : [];
 
-    // Merge by date
-    const map = new Map<
+    // ---- Merge by date ----
+    const byDate = new Map<
       string,
-      {
-        date: string;
-        sessions?: number;
-        clicks?: number;
-        impressions?: number;
-        ctr?: number;
-        position?: number;
-      }
+      { date: string; sessions?: number; clicks?: number; impressions?: number; ctr?: number; position?: number }
     >();
 
-    const toKey = (d: string) => d; // dates already YYYY-MM-DD from both APIs
-
-    // GA into map
     for (const r of gaRows) {
-      const k = toKey(r.date || "");
-      if (!k) continue;
-      const row = map.get(k) || { date: k };
+      if (!r.date) continue;
+      const row = byDate.get(r.date) || { date: r.date };
       row.sessions = Number(r.sessions ?? 0);
-      map.set(k, row);
+      byDate.set(r.date, row);
     }
 
-    // GSC into map
     for (const r of gRows) {
-      const k = toKey(String(r.date || ""));
-      if (!k) continue;
-      const row = map.get(k) || { date: k };
+      const d = String(r.date || "");
+      if (!d) continue;
+      const row = byDate.get(d) || { date: d };
       row.clicks = Number(r.clicks ?? 0);
       row.impressions = Number(r.impressions ?? 0);
-      // Keep ctr/position numeric (not % string). If you want % later, do it in the UI.
-      row.ctr = Number(r.ctr ?? 0);
+      row.ctr = Number(r.ctr ?? 0); // keep as decimal (e.g., 0.1234). Convert to % in UI if desired.
       row.position = Number(r.position ?? 0);
-      map.set(k, row);
+      byDate.set(d, row);
     }
 
-    const data = Array.from(map.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
+    const data = Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
     return res.status(200).json({ data });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || "Unexpected error" });
