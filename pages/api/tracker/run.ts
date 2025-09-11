@@ -1,13 +1,53 @@
-import type { NextApiRequest, NextApiResponse } from "next";import { getToken } from "next-auth/jwt";import { driveFindOrCreateSpreadsheet, sheetsAppend, gscQuery } from "../../../lib/google";
-export default async function handler(req:NextApiRequest,res:NextApiResponse){ if(req.method!=="POST") return res.status(405).json({error:"Method not allowed"}); const token=await getToken({req,secret:process.env.NEXTAUTH_SECRET}); if(!token?.access_token) return res.status(401).json({error:"Not authenticated"});
-const email=String(token.email||"user"); const { siteUrl, keywords=[], location="", days=1, topN=10 } = (req.body||{}) as any; if(!siteUrl) return res.status(400).json({error:"Missing siteUrl"});
-try{const end=new Date(); const start=new Date(); start.setDate(end.getDate()-(Number(days)-1)); const iso=(d:Date)=>d.toISOString().slice(0,10); const range={startDate:iso(start),endDate:iso(end)};
-const j=await gscQuery(token.access_token as string, siteUrl, { startDate:range.startDate, endDate:range.endDate, dimensions:["query","page"], rowLimit:25000, type:"web"});
-const want=(q:string)=>!keywords.length||keywords.some((k:string)=>q.toLowerCase().includes(k.toLowerCase()));
-const rows=(j.rows||[]) as Array<{keys:string[];clicks:number;impressions:number;position:number}>;
-const filtered=rows.map(r=>({query:r.keys?.[0]||"",page:r.keys?.[1]||"",clicks:r.clicks||0,impressions:r.impressions||0,position:r.position||999})).filter(r=>r.query&&r.page&&r.position>0&&r.position<=Number(topN)&&want(r.query));
-const serpKey=process.env.SERPAPI_KEY||""; async function serpTopUrl(q:string){ if(!serpKey) return ""; try{const url=new URL("https://serpapi.com/search.json"); url.searchParams.set("engine","google"); url.searchParams.set("q",q); if(location) url.searchParams.set("location",location); url.searchParams.set("num","10"); url.searchParams.set("api_key",serpKey); const r=await fetch(url.toString()); const s=await r.json(); return (s.organic_results&&s.organic_results[0]?.link)||""; }catch{return "";} }
-const key=`${email}|${siteUrl}|${range.startDate}|${range.endDate}|${(keywords||[]).join("|")}|${location}|${topN}`;
-const values:any[][]=[]; for(const r of filtered.slice(0,1000)){ const topUrl=await serpTopUrl(r.query); values.push([iso(end),siteUrl,r.query,r.page,r.position,r.clicks,r.impressions,location||"",topUrl,key]); }
-const spreadsheetId=await driveFindOrCreateSpreadsheet(token.access_token as string, `VSight_${email}`); if(values.length) await sheetsAppend(token.access_token as string, spreadsheetId, "Tracker", values);
-return res.status(200).json({ok:true,appended:values.length,message:`Tracker: appended ${values.length} row(s) for ${siteUrl} (${range.startDate}..${range.endDate})`+(serpKey?"":" — SERP snapshots skipped")}); }catch(e:any){ return res.status(500).json({error:e.message||"Unexpected error"}); } }
+import type { NextApiRequest, NextApiResponse } from "next";
+import { getToken } from "next-auth/jwt";
+import { driveFindOrCreateSpreadsheet, sheetsAppend, gscTopQueries, serpTopUrl } from "@/lib/google";
+
+function iso(d: string | Date) { return new Date(d).toISOString().slice(0,10); }
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  try {
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+    if (!token?.access_token) return res.status(401).json({ error: "Not authenticated" });
+
+    const body = (req.body || {}) as any;
+    const email = String(token.email || "user");
+    const siteUrl = String(body.siteUrl || "");
+    const range = body.range || { startDate: body.start || body.startDate, endDate: body.end || body.endDate };
+    const keywords: string[] = Array.isArray(body.keywords) ? body.keywords : [];
+    const location = String(body.location || "");
+    const topN: number = Number(body.topN || 100);
+    if (!siteUrl || !range?.startDate || !range?.endDate) return res.status(400).json({ error: "Missing siteUrl/range" });
+
+    const { rows } = await gscTopQueries(String(token.access_token), siteUrl, {
+      startDate: iso(range.startDate),
+      endDate: iso(range.endDate),
+      rowLimit: topN,
+      dimensions: ["query"],
+      type: "web",
+    });
+
+    // optional keyword filtering
+    const filtered = keywords.length
+      ? rows.filter(r => keywords.some(k => r.query.toLowerCase().includes(String(k).toLowerCase())))
+      : rows;
+
+    const key = `${email}|${siteUrl}|${range.startDate}|${range.endDate}|${(keywords||[]).join("|")}|${location}|${topN}`;
+    const values: any[][] = [];
+    for (const r of filtered.slice(0, 1000)) {
+      const topUrl = await serpTopUrl(r.query);
+      values.push([iso(range.endDate), siteUrl, r.query, r.page || "", r.position, r.clicks, r.impressions, location || "", topUrl, key]);
+    }
+
+    const { id: spreadsheetId } = await driveFindOrCreateSpreadsheet(String(token.access_token), `VSight_${email}`);
+    if (values.length) await sheetsAppend(String(token.access_token), spreadsheetId, "Tracker", values);
+
+    return res.status(200).json({
+      ok: true,
+      appended: values.length,
+      message: `Tracker: appended ${values.length} row(s) for ${siteUrl} (${range.startDate}..${range.endDate})`,
+    });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || "Unexpected error" });
+  }
+}
