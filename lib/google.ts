@@ -122,6 +122,96 @@ export async function gscTopQueries(
     })),
   };
 }
+// ---------------------- Search Console: generic query (date/query/page) ----------------------
+type GscQueryOpts = {
+  startDate: string;
+  endDate: string;
+  dimensions?: ("date" | "query" | "page" | string)[];
+  rowLimit?: number;
+  type?: "web" | "image" | "video" | string;
+  dimensionFilterGroups?: any; // tolerated/no-op passthrough for old callers
+};
+
+/**
+ * Generic Search Console query wrapper that matches older route usages.
+ * Returns an ARRAY of normalized rows so `for (const r of gscRows)` works.
+ *
+ * - If dimensions include "date": rows => { date, clicks, impressions, ctr, position }
+ * - If dimensions include "query": rows => { query, clicks, impressions, ctr, position, page? }
+ * - If dimensions include "page":  rows => { page, clicks, impressions, ctr, position, query? }
+ */
+export async function gscQuery(
+  accessToken: string,
+  siteUrl: string,
+  opts: GscQueryOpts
+): Promise<
+  Array<
+    | { date: string; clicks: number; impressions: number; ctr: number; position: number }
+    | { query: string; clicks: number; impressions: number; ctr: number; position: number; page?: string }
+    | { page: string; clicks: number; impressions: number; ctr: number; position: number; query?: string }
+  >
+> {
+  const {
+    startDate,
+    endDate,
+    dimensions = ["date"],
+    rowLimit = 1000,
+    type = "web",
+  } = opts;
+
+  const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
+    siteUrl
+  )}/searchAnalytics/query`;
+
+  const body = {
+    startDate,
+    endDate,
+    dimensions,
+    searchType: type,
+    rowLimit,
+  };
+
+  const data = await fetchJson<any>(url, {
+    method: "POST",
+    accessToken,
+    body: JSON.stringify(body),
+  });
+
+  const rows = Array.isArray(data?.rows) ? data.rows : [];
+
+  // Normalize based on requested dimensions
+  const hasDate = dimensions.includes("date");
+  const hasQuery = dimensions.includes("query");
+  const hasPage = dimensions.includes("page");
+
+  return rows.map((r: any) => {
+    const keys = Array.isArray(r?.keys) ? r.keys : [];
+    const clicks = Number(r?.clicks ?? 0);
+    const impressions = Number(r?.impressions ?? 0);
+    const ctr = Number(r?.ctr ?? 0);
+    const position = Number(r?.position ?? 0);
+
+    if (hasDate) {
+      const date = String(keys[dimensions.indexOf("date")] || "");
+      return { date, clicks, impressions, ctr, position };
+    }
+    if (hasQuery && hasPage) {
+      const query = String(keys[dimensions.indexOf("query")] || "");
+      const page = String(keys[dimensions.indexOf("page")] || "");
+      return { query, page, clicks, impressions, ctr, position };
+    }
+    if (hasQuery) {
+      const query = String(keys[dimensions.indexOf("query")] || "");
+      return { query, clicks, impressions, ctr, position };
+    }
+    if (hasPage) {
+      const page = String(keys[dimensions.indexOf("page")] || "");
+      return { page, clicks, impressions, ctr, position };
+    }
+    // Fallback: treat first key as a label
+    return { query: String(keys[0] || ""), clicks, impressions, ctr, position };
+  });
+}
 
 // ---------------------- GBP: list locations ----------------------
 /** Minimal GBP locations. Returns { locations: [{ name, title }] } */
