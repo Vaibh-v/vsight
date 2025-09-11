@@ -1,4 +1,3 @@
-// pages/api/google/gsc/top-queries.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
 import { gscTopQueries } from "@/lib/google";
@@ -17,7 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const rowLimit = limit ? Number(limit) : 1000;
 
-    // No `dimensions` here — gscTopQueries fixes it to ["query"] internally
+    // No `dimensions` prop — handled inside gscTopQueries()
     const data = await gscTopQueries(token.access_token as string, siteUrl, {
       startDate,
       endDate,
@@ -25,9 +24,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       type: "web",
     });
 
-    // Normalize rows defensively
-    const rows = Array.isArray((data as any)?.rows) ? (data as any).rows : [];
-    const out = rows.map((r: any) => ({
+    const rawRows = Array.isArray((data as any)?.rows) ? (data as any).rows : [];
+    const rows = rawRows.map((r: any) => ({
       query: r?.keys?.[0] ?? "",
       clicks: Number(r?.clicks ?? 0),
       impressions: Number(r?.impressions ?? 0),
@@ -35,7 +33,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       position: Number(r?.position ?? 0),
     }));
 
-    return res.status(200).json({ rows: out });
+    return res.status(200).json({ rows });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || "Unexpected error" });
   }
