@@ -37,8 +37,32 @@ const iso = (d: Date | string) =>
   typeof d === "string" ? d : new Date(d).toISOString().slice(0, 10);
 
 /* ---------------------- Google Business Profile (GBP) ---------------------- */
+/**
+ * List GBP locations. If `accountId` is provided, fetch locations for that account only.
+ * Otherwise: list all accounts then aggregate all locations.
+ * Returns minimal objects: { name, title }
+ */
+export async function gbpListLocations(
+  accessToken: string,
+  accountId?: string
+): Promise<{ name: string; title: string }[]> {
+  // Helper to fetch locations for one account
+  const fetchLocationsForAccount = async (accName: string) => {
+    const url = `https://mybusinessbusinessinformation.googleapis.com/v1/${encodeURIComponent(
+      accName
+    )}/locations?readMask=name,title`;
+    const data = await fetchJson<any>(url, { accessToken });
+    const locations: any[] = Array.isArray(data?.locations) ? data.locations : [];
+    return locations.map((l) => ({ name: String(l?.name ?? ""), title: String(l?.title ?? "") }));
+  };
 
-export async function gbpListLocations(accessToken: string): Promise<{ name: string; title: string }[]> {
+  if (accountId) {
+    // Accept both plain ID ("123") and full resource ("accounts/123")
+    const accResource = accountId.startsWith("accounts/") ? accountId : `accounts/${accountId}`;
+    return fetchLocationsForAccount(accResource);
+  }
+
+  // No account provided: list accounts first
   const accountsUrl = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts";
   const accountsData = await fetchJson<any>(accountsUrl, { accessToken });
   const accounts: string[] = Array.isArray(accountsData?.accounts)
@@ -46,15 +70,9 @@ export async function gbpListLocations(accessToken: string): Promise<{ name: str
     : [];
 
   const all: { name: string; title: string }[] = [];
-  for (const accountName of accounts) {
-    const locUrl = `https://mybusinessbusinessinformation.googleapis.com/v1/${encodeURIComponent(
-      accountName
-    )}/locations?readMask=name,title`;
-    const locData = await fetchJson<any>(locUrl, { accessToken });
-    const locations: any[] = Array.isArray(locData?.locations) ? locData.locations : [];
-    for (const l of locations) {
-      all.push({ name: String(l?.name ?? ""), title: String(l?.title ?? "") });
-    }
+  for (const accName of accounts) {
+    const rows = await fetchLocationsForAccount(accName);
+    all.push(...rows);
   }
   return all;
 }
@@ -335,4 +353,5 @@ export async function serpTopUrl(query: string): Promise<string> {
 }
 
 /* ------------------------------- Back-compat shim ------------------------------ */
+// Some older code might import this; keep as alias for now (locations list, not accounts).
 export const gbpListAccounts = gbpListLocations;
