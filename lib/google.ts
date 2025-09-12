@@ -38,26 +38,15 @@ const iso = (d: Date | string) =>
 
 /* ---------------------- Google Business Profile (GBP) ---------------------- */
 
-/**
- * List Google Business Profile locations visible to the user.
- * Returns minimal objects: { name: string, title: string }
- *
- * We:
- * 1) list accounts via My Business Account Management
- * 2) for each account, list locations via My Business Business Information
- */
 export async function gbpListLocations(accessToken: string): Promise<{ name: string; title: string }[]> {
-  // 1) accounts
   const accountsUrl = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts";
   const accountsData = await fetchJson<any>(accountsUrl, { accessToken });
   const accounts: string[] = Array.isArray(accountsData?.accounts)
     ? accountsData.accounts.map((a: any) => a?.name).filter(Boolean)
     : [];
 
-  // 2) locations per account
   const all: { name: string; title: string }[] = [];
   for (const accountName of accounts) {
-    // readMask keeps payload small + allowed in BI v1
     const locUrl = `https://mybusinessbusinessinformation.googleapis.com/v1/${encodeURIComponent(
       accountName
     )}/locations?readMask=name,title`;
@@ -72,7 +61,6 @@ export async function gbpListLocations(accessToken: string): Promise<{ name: str
 
 /* ------------------------------- Google Analytics ------------------------------ */
 
-/** List GA4 properties (flattened) via Analytics Admin Account Summaries. */
 export async function gaListProperties(accessToken: string): Promise<
   { propertyId: string; displayName: string; account: string }[]
 > {
@@ -97,26 +85,38 @@ export async function gaListProperties(accessToken: string): Promise<
 
 /**
  * Run GA4 report (Analytics Data API v1beta).
- * dimensions/metrics passed as string arrays; dateRanges in GA format.
+ * Accepts dimensions/metrics as **string[]** OR **{name:string}[]**.
  */
 export async function gaRunReport(
   accessToken: string,
   propertyId: string,
   options: {
-    dimensions?: string[];
-    metrics?: string[];
+    dimensions?: (string | { name: string })[];
+    metrics?: (string | { name: string })[];
     dateRanges?: { startDate: string; endDate: string }[];
     limit?: number;
     metricAggregations?: string[];
     dimensionFilter?: any;
   }
 ): Promise<any> {
-  const { dimensions = [], metrics = [], dateRanges = [], limit, metricAggregations, dimensionFilter } = options;
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`;
+  const {
+    dimensions = [],
+    metrics = [],
+    dateRanges = [],
+    limit,
+    metricAggregations,
+    dimensionFilter,
+  } = options;
 
+  const toDim = (d: string | { name: string }) =>
+    typeof d === "string" ? { name: d } : { name: String(d?.name || "") };
+  const toMet = (m: string | { name: string }) =>
+    typeof m === "string" ? { name: m } : { name: String(m?.name || "") };
+
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`;
   const body: any = {
-    dimensions: dimensions.map((d) => ({ name: d })),
-    metrics: metrics.map((m) => ({ name: m })),
+    dimensions: dimensions.map(toDim),
+    metrics: metrics.map(toMet),
     dateRanges,
   };
   if (typeof limit === "number") body.limit = limit;
@@ -134,16 +134,11 @@ type GscQueryOpts = {
   type?: "web" | "image" | "video" | "news";
   rowLimit?: number;
   startRow?: number;
-  dimensions?: string[]; // e.g. ["date"], ["query"], ["page"], ["query","page"], etc.
+  dimensions?: string[];
   dimensionFilterGroups?: any[];
-  [key: string]: any; // tolerate extra keys from older callers
+  [key: string]: any;
 };
 
-/**
- * Core GSC Search Analytics query.
- * Returns { rows } where rows are normalized based on requested dimensions.
- * Looser typing prevents union-mismatch TypeScript errors across varied routes.
- */
 export async function gscQuery(
   accessToken: string,
   siteUrl: string,
@@ -201,14 +196,12 @@ export async function gscQuery(
       const page = String(keys[dimensions.indexOf("page")] || "");
       return { page, clicks, impressions, ctr, position };
     }
-    // Fallback – still return a valid shape
     return { clicks, impressions, ctr, position };
   };
 
   return { rows: rows.map(mapRow) };
 }
 
-/** List verified sites for the user (minimal). */
 export async function gscSites(accessToken: string): Promise<{ siteUrl: string; permissionLevel?: string }[]> {
   const url = "https://www.googleapis.com/webmasters/v3/sites";
   const data = await fetchJson<any>(url, { accessToken });
@@ -218,14 +211,8 @@ export async function gscSites(accessToken: string): Promise<{ siteUrl: string; 
     permissionLevel: s?.permissionLevel ? String(s.permissionLevel) : undefined,
   }));
 }
-// Alias to satisfy older imports
 export const gscListSites = gscSites;
 
-/**
- * Convenience: top queries for a site.
- * Accepts both modern (3-arg) and legacy (5-arg) call signatures.
- */
-// Overloads for ergonomics
 export function gscTopQueries(
   accessToken: string,
   siteUrl: string,
@@ -245,9 +232,7 @@ export async function gscTopQueries(
   a4?: any,
   a5?: any
 ): Promise<any[]> {
-  // Normalize arguments
   let startDate: string, endDate: string, rowLimit: number | undefined, type: string | undefined, dimensionFilterGroups: any[] | undefined;
-
   if (typeof a3 === "object" && a3) {
     startDate = a3.startDate;
     endDate = a3.endDate;
@@ -272,11 +257,6 @@ export async function gscTopQueries(
   return rows;
 }
 
-/**
- * Convenience: daily clicks series for a site between dates.
- * Accepts both (token, siteUrl, startDate, endDate) and
- * (token, siteUrl, { startDate, endDate, rowLimit? }) signatures.
- */
 export async function gscTimeseriesClicks(
   accessToken: string,
   siteUrl: string,
@@ -296,21 +276,15 @@ export async function gscTimeseriesClicks(
     dimensions: ["date"],
   });
 
-  // rows already normalized when dimensions include "date"
   return rows as any[];
 }
 
 /* ---------------------------- Drive / Sheets helpers ---------------------------- */
 
-/**
- * Find or create a Google Spreadsheet by name in the user's Drive.
- * RETURNS an object so callers can do: `const { id: spreadsheetId } = await ...`
- */
 export async function driveFindOrCreateSpreadsheet(
   accessToken: string,
   name: string
 ): Promise<{ id: string; name: string }> {
-  // 1) Try to find
   const listUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
     `name='${name}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`
   )}&fields=files(id,name)`;
@@ -318,7 +292,6 @@ export async function driveFindOrCreateSpreadsheet(
   const found = Array.isArray(list?.files) ? list.files[0] : null;
   if (found?.id) return { id: String(found.id), name: String(found.name ?? name) };
 
-  // 2) Create
   const createUrl = "https://sheets.googleapis.com/v4/spreadsheets";
   const created = await fetchJson<any>(createUrl, {
     method: "POST",
@@ -328,7 +301,6 @@ export async function driveFindOrCreateSpreadsheet(
   return { id: String(created?.spreadsheetId || ""), name };
 }
 
-/** Append rows to a sheet/tab. `values` is a 2D array. */
 export async function sheetsAppend(
   accessToken: string,
   spreadsheetId: string,
@@ -345,7 +317,6 @@ export async function sheetsAppend(
   });
 }
 
-/** Read a range from a sheet/tab. Returns Sheets `values` payload. */
 export async function sheetsGet(
   accessToken: string,
   spreadsheetId: string,
@@ -359,15 +330,9 @@ export async function sheetsGet(
 
 /* ------------------------------ Misc conveniences ------------------------------ */
 
-/**
- * Very light placeholder that returns a Google SERP URL for a query.
- * (Prevents runtime failures in tracker routes that call `serpTopUrl`.)
- */
 export async function serpTopUrl(query: string): Promise<string> {
-  // If you later wire a real SERP fetcher, replace this body.
   return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 
 /* ------------------------------- Back-compat shim ------------------------------ */
-// Some earlier code used different export names; keep shims to avoid build churn.
-export const gbpListAccounts = gbpListLocations; // harmless alias
+export const gbpListAccounts = gbpListLocations;
