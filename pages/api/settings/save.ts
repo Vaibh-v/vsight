@@ -7,21 +7,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.access_token) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
-
-    const { rows } = (req.body || {}) as { rows?: any[][] };
-    if (!Array.isArray(rows) || !rows.length) {
-      return res.status(400).json({ error: "Missing rows" });
-    }
+    if (!token?.access_token) return res.status(401).json({ error: "Not authenticated" });
 
     const email = String(token.email || "user");
-    // FIX: expect a string spreadsheetId
-    const spreadsheetId = await driveFindOrCreateSpreadsheet(String(token.access_token), `VSight_${email}`);
+    const { rows } = (req.body || {}) as any; // expecting rows: any[][]
+    if (!Array.isArray(rows)) return res.status(400).json({ error: "Missing rows" });
 
-    await sheetsAppend(String(token.access_token), spreadsheetId, "Vault", rows);
-    return res.status(200).json({ ok: true, spreadsheetId, appended: rows.length });
+    const spreadsheetId = await driveFindOrCreateSpreadsheet(String(token.access_token), `VSight_${email}`);
+    await sheetsAppend(String(token.access_token), spreadsheetId, "Settings", rows);
+
+    return res.status(200).json({ ok: true, spreadsheetId });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || "Unexpected error" });
   }
