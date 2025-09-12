@@ -351,7 +351,6 @@ export async function sheetsGet(
 export async function serpTopUrl(query: string): Promise<string> {
   return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
-
 /* ------------------------------- Back-compat shim ------------------------------ */
 // Some older code might import this; keep as alias for now (locations list, not accounts).
 export const gbpListAccounts = gbpListLocations;
