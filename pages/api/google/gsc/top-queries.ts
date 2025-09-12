@@ -7,36 +7,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
     if (!token?.access_token) return res.status(401).json({ error: "Not authenticated" });
 
-    const q = (req.query || {}) as Record<string, string>;
-    const siteUrl   = q.siteUrl;
-    const startDate = q.startDate;
-    const endDate   = q.endDate;
-    const rowLimit  = q.limit ? Number(q.limit) : 1000;
+    const { siteUrl, start, end, limit } = req.query as any;
+    if (!siteUrl || !start || !end) return res.status(400).json({ error: "Missing siteUrl/start/end" });
 
-    if (!siteUrl || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing siteUrl/startDate/endDate" });
-    }
-
-    // NOTE: Do NOT pass `dimensions` here. gscTopQueries() always uses ["query"] internally.
-    const data = await gscTopQueries(token.access_token as string, siteUrl, {
-      startDate,
-      endDate,
-      rowLimit,
+    const rows = await gscTopQueries(String(token.access_token), String(siteUrl), {
+      startDate: String(start),
+      endDate: String(end),
+      rowLimit: limit ? Number(limit) : 1000,
       type: "web",
-      // dimensionFilterGroups?: pass only if you actually need filters
     });
 
-    const rawRows = Array.isArray((data as any)?.rows) ? (data as any).rows : [];
-    const rows = rawRows.map((r: any) => ({
-      query: r?.keys?.[0] ?? "",
-      clicks: Number(r?.clicks ?? 0),
-      impressions: Number(r?.impressions ?? 0),
-      ctr: Number(r?.ctr ?? 0),
-      position: Number(r?.position ?? 0),
-    }));
-
-    return res.status(200).json({ rows });
+    res.status(200).json({ rows });
   } catch (e: any) {
-    return res.status(500).json({ error: e?.message || "Unexpected error" });
+    res.status(500).json({ error: e?.message || "Unexpected error" });
   }
 }
