@@ -3,14 +3,22 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
 import { gscTopQueries } from "@/lib/google";
 
-/**
- * GET /api/google/gsc/top-queries
- * Query params:
- *   siteUrl (required)
- *   start, end (ISO, optional; defaults last 28d)
- *   limit OR rowLimit (optional; number; defaults 10)
- * Returns: { rows: Array<{ query, clicks, impressions, ctr, position, page? }> }
- */
+type Row = {
+  query: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+  page?: string;
+};
+
+function asRows(x: any): Row[] {
+  if (!x) return [];
+  if (Array.isArray(x)) return x as Row[];
+  if (Array.isArray(x.rows)) return x.rows as Row[];
+  return [];
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     if (req.method !== "GET") {
@@ -21,28 +29,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const accessToken = String(token?.access_token || "");
     if (!accessToken) return res.status(401).json({ error: "Not authenticated" });
 
-    const siteUrl = String(req.query.siteUrl || "");
-    if (!siteUrl) return res.status(400).json({ error: "Missing siteUrl" });
+    const { siteUrl, start, end, limit } = req.query as {
+      siteUrl?: string;
+      start?: string;
+      end?: string;
+      limit?: string;
+    };
 
-    const startParam = String(req.query.start || "");
-    const endParam = String(req.query.end || "");
+    if (!siteUrl) {
+      return res.status(400).json({ error: "Missing siteUrl" });
+    }
 
-    // Accept both ?limit= and legacy ?rowLimit=
-    const limRaw = (req.query.limit ?? req.query.rowLimit) as string | string[] | undefined;
-    const limit = Number(Array.isArray(limRaw) ? limRaw[0] : limRaw) || 10;
-
-    // Defaults: last 28 days if dates not provided
-    const endDate = endParam || new Date().toISOString().slice(0, 10);
+    const endDate =
+      end || new Date().toISOString().slice(0, 10);
     const startDate =
-      startParam ||
+      start ||
       new Date(Date.now() - 27 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    const { rows } = await gscTopQueries(accessToken, siteUrl, {
+    // lib/google.gscTopQueries now accepts { startDate, endDate, limit }
+    const raw = await gscTopQueries(accessToken, String(siteUrl), {
       startDate,
       endDate,
-      limit,
-      type: "web",
+      limit: limit ? Number(limit) : 10,
     });
+
+    const rows = asRows(raw);
 
     return res.status(200).json({ rows });
   } catch (e: any) {
