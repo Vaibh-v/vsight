@@ -34,21 +34,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             metrics: [{ name: "sessions" }],
             dateRanges: [{ startDate: String(startDate), endDate: String(endDate) }],
           })
-        : Promise.resolve({ rows: [] }),
+        : Promise.resolve({ rows: [] as any[] }),
       wantGSC
         ? gscTimeseriesClicks(accessToken, String(siteUrl), {
             startDate: String(startDate),
             endDate: String(endDate),
           })
-        : Promise.resolve({ rows: [] }),
+        : Promise.resolve({ rows: [] as any[] }),
     ]);
 
-    const gaRows: GaRow[] = (ga?.rows ?? []).map((r: any) => ({
+    // GA: expect { rows: [...] }, but tolerate arrays too.
+    const gaRaw: any[] = Array.isArray((ga as any)?.rows)
+      ? (ga as any).rows
+      : Array.isArray(ga)
+      ? (ga as any)
+      : [];
+    const gaRows: GaRow[] = gaRaw.map((r: any) => ({
       date: r?.date ?? "",
       sessions: Number(r?.sessions ?? 0),
     }));
 
-    const gscRows: GscRow[] = (gsc?.rows ?? []).map((r: any) => ({
+    // GSC: tolerate either { rows: [...] } or bare array
+    const gscRaw: any[] = Array.isArray((gsc as any)?.rows)
+      ? (gsc as any).rows
+      : Array.isArray(gsc)
+      ? (gsc as any)
+      : [];
+    const gscRows: GscRow[] = gscRaw.map((r: any) => ({
       date: r?.date ?? "",
       clicks: Number(r?.clicks ?? 0),
       impressions: Number(r?.impressions ?? 0),
