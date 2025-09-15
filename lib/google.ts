@@ -179,7 +179,7 @@ export async function gscQuery(
   return { rows: rows.map(mapRow) };
 }
 
-/** Top queries — accepts positional or object form to be backward compatible. */
+/** Top queries — accepts positional or object form for backward compatibility. */
 export async function gscTopQueries(
   accessToken: string,
   siteUrl: string,
@@ -204,7 +204,7 @@ export async function gscTopQueries(
   return rows.filter((r: any) => "query" in r) as any[];
 }
 
-/** Time series (date) — accepts positional OR object form (fix for your error). */
+/** Time series (date) — accepts positional OR object form. */
 export async function gscTimeseriesClicks(
   accessToken: string,
   siteUrl: string,
@@ -243,7 +243,7 @@ export async function gbpListAccounts(
 export async function gbpListLocations(
   accessToken: string,
   accountId?: string
-): Promise<Array<{ name: string; title: string; primaryCategory?: string }>> {
+): Promise<Array<{ name: string; title: string; storeCode?: string; primaryCategory?: string }>> {
   let accName = accountId ? `accounts/${accountId}` : "";
   if (!accName) {
     const accs = await gbpListAccounts(accessToken);
@@ -255,7 +255,7 @@ export async function gbpListLocations(
   const data = await fetchJson(url, {
     accessToken,
     query: {
-      readMask: "name,title,primaryCategory",
+      readMask: "name,title,storeCode,primaryCategory",
       pageSize: 100,
     },
   });
@@ -264,6 +264,7 @@ export async function gbpListLocations(
   return locations.map((l) => ({
     name: String(l?.name || ""),
     title: String(l?.title || ""),
+    storeCode: l?.storeCode ? String(l.storeCode) : undefined,
     primaryCategory: String(l?.primaryCategory?.displayName || ""),
   }));
 }
@@ -289,7 +290,7 @@ export async function driveFindOrCreateSpreadsheet(
   const found = Array.isArray(search?.files) ? search.files[0] : null;
   if (found?.id) {
     return { id: String(found.id), name: String(found.name || name) };
-    }
+  }
   const created = await fetchJson("https://sheets.googleapis.com/v4/spreadsheets", {
     method: "POST",
     accessToken,
