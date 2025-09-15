@@ -1,201 +1,252 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
-type GaProperty = { property: string; displayName: string };
+type GaRow = { date: string; sessions: number };
+type GscRow = { date: string; clicks: number; impressions: number; ctr: number; position: number };
+
+type GaProperty = { property: string; displayName?: string };
 type GscSite = { siteUrl: string; permissionLevel?: string };
 
-type GaPoint = { date: string; sessions: number };
-type GscPoint = { date: string; clicks: number; impressions: number; ctr: number; position: number };
+type AggregationsResponse =
+  | { ga: GaRow[]; gsc: GscRow[] }
+  | { error: string };
 
-export default function Dashboard() {
+function toISO(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const r = await fetch(url, { credentials: "include" });
+  if (!r.ok) {
+    let msg = `${r.status} ${r.statusText}`;
+    try {
+      const j = await r.json();
+      msg = (j && (j.error || j.message)) || msg;
+    } catch {
+      // ignore
+    }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+export default function DashboardPage() {
   const [gaProps, setGaProps] = useState<GaProperty[]>([]);
   const [gscSites, setGscSites] = useState<GscSite[]>([]);
+
   const [propertyId, setPropertyId] = useState<string>("");
   const [siteUrl, setSiteUrl] = useState<string>("");
 
-  const [startDate, setStartDate] = useState<string>(() => {
-    const d = new Date(Date.now() - 27 * 24 * 60 * 60 * 1000);
-    return d.toISOString().slice(0, 10);
-  });
-  const [endDate, setEndDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  // Default to last 28 days
+  const today = useMemo(() => new Date(), []);
+  const [endDate, setEndDate] = useState<string>(toISO(today));
+  const [startDate, setStartDate] = useState<string>(
+    toISO(new Date(today.getTime() - 27 * 24 * 60 * 60 * 1000))
+  );
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [err, setErr] = useState<string>("");
+  const [ga, setGa] = useState<GaRow[]>([]);
+  const [gsc, setGsc] = useState<GscRow[]>([]);
 
-  const [gaRows, setGaRows] = useState<GaPoint[]>([]);
-  const [gscRows, setGscRows] = useState<GscPoint[]>([]);
-
-  // Fetch lists for dropdowns
+  // Load picklists (defensive: tolerate either shape the APIs might return)
   useEffect(() => {
     (async () => {
       try {
-        const [gaRes, gscRes] = await Promise.all([
-          fetch("/api/ga/properties"),
-          fetch("/api/gsc/sites"),
-        ]);
-        if (!gaRes.ok) throw new Error(`GA properties: ${await gaRes.text()}`);
-        if (!gscRes.ok) throw new Error(`GSC sites: ${await gscRes.text()}`);
+        // GA4 properties
+        try {
+          const j: any = await fetchJson<any>("/api/ga/properties");
+          const rows: GaProperty[] = Array.isArray(j?.properties) ? j.properties : Array.isArray(j) ? j : [];
+          setGaProps(rows);
+          if (!propertyId && rows.length > 0) setPropertyId(rows[0].property);
+        } catch (e: any) {
+          // It's okay if user didn't connect GA; keep empty list
+          console.warn("GA properties load warning:", e?.message || e);
+        }
 
-        const gaJson = await gaRes.json();   // { properties: [...] }
-        const gscJson = await gscRes.json(); // { sites: [...] }
-
-        const props: GaProperty[] = Array.isArray(gaJson?.properties) ? gaJson.properties : [];
-        const sites: GscSite[] = Array.isArray(gscJson?.sites) ? gscJson.sites : [];
-
-        setGaProps(props);
-        setGscSites(sites);
-
-        // Preselect first items if any
-        if (props.length && !propertyId) setPropertyId(props[0].property.replace("properties/", ""));
-        if (sites.length && !siteUrl) setSiteUrl(sites[0].siteUrl);
-      } catch (e: any) {
-        setError(e?.message || "Failed to load lists.");
+        // GSC sites
+        try {
+          const j: any = await fetchJson<any>("/api/gsc/sites");
+          const rows: GscSite[] = Array.isArray(j?.sites) ? j.sites : Array.isArray(j) ? j : [];
+          setGscSites(rows);
+          if (!siteUrl && rows.length > 0) setSiteUrl(rows[0].siteUrl);
+        } catch (e: any) {
+          console.warn("GSC sites load warning:", e?.message || e);
+        }
+      } catch (e) {
+        // swallow
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const canRun = useMemo(() => {
-    // We allow GA-only or GSC-only or both
-    return !!(propertyId || siteUrl) && !!startDate && !!endDate;
-  }, [propertyId, siteUrl, startDate, endDate]);
-
   async function run() {
-    if (!canRun) return;
+    setErr("");
     setLoading(true);
-    setError("");
-    setGaRows([]);
-    setGscRows([]);
+    setGa([]);
+    setGsc([]);
     try {
-      const params = new URLSearchParams();
-      if (propertyId) params.set("propertyId", propertyId);
-      if (siteUrl) params.set("siteUrl", siteUrl); // keep EXACT value (sc-domain:… or https://…)
-      params.set("startDate", startDate);
-      params.set("endDate", endDate);
+      const qs = new URLSearchParams({
+        ...(propertyId ? { propertyId } : {}),
+        ...(siteUrl ? { siteUrl } : {}),
+        startDate,
+        endDate,
+      }).toString();
 
-      const res = await fetch(`/api/aggregations/default?${params.toString()}`);
-      const j = await res.json();
-      if (!res.ok) {
-        throw new Error(j?.error || "Request failed");
+      const j = await fetchJson<AggregationsResponse>(`/api/aggregations/default?${qs}`);
+
+      if ("error" in j) {
+        setErr(j.error || "Unknown error");
+        setGa([]);
+        setGsc([]);
+        return;
       }
-      const ga: GaPoint[] = Array.isArray(j?.ga) ? j.ga : [];
-      const gsc: GscPoint[] = Array.isArray(j?.gsc) ? j.gsc : (Array.isArray(j?.gsc?.rows) ? j.gsc.rows : []);
-      setGaRows(ga);
-      setGscRows(gsc);
 
-      // Keep a little state for AI Insight page (optional)
-      try {
-        localStorage.setItem("vsight_last_dashboard", JSON.stringify({
-          propertyId, siteUrl, startDate, endDate, gaCount: ga.length, gscCount: gsc.length
-        }));
-      } catch {}
+      setGa(Array.isArray(j.ga) ? j.ga : []);
+      setGsc(Array.isArray(j.gsc) ? j.gsc : []);
     } catch (e: any) {
-      setError(e?.message || "Unexpected error");
+      setErr(String(e?.message || e || "Unexpected error"));
     } finally {
       setLoading(false);
     }
   }
 
+  // small helpers for UI
+  function formatNum(n: number | undefined) {
+    return (n ?? 0).toLocaleString();
+  }
+
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-4">
-      <h1 className="text-2xl font-semibold">Default Dashboard</h1>
+    <div className="max-w-5xl mx-auto px-4 py-8">
+      <h1 className="text-2xl font-semibold mb-6">Default Dashboard</h1>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <select
-          className="border rounded px-2 py-1 min-w-[260px]"
-          value={propertyId}
-          onChange={e => setPropertyId(e.target.value)}
-        >
-          <option value="">— GA4 (optional) —</option>
-          {gaProps.map(p => {
-            const id = p.property.replace("properties/", "");
-            return (
-              <option key={p.property} value={id}>
-                {p.displayName} ({id})
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        <div className="md:col-span-2">
+          <label className="block text-sm font-medium mb-1">GA4 Property (optional)</label>
+          <select
+            className="w-full border rounded px-3 py-2"
+            value={propertyId}
+            onChange={(e) => setPropertyId(e.target.value)}
+          >
+            <option value="">— Not using GA4 —</option>
+            {gaProps.map((p) => (
+              <option key={p.property} value={p.property}>
+                {p.displayName ? `${p.displayName} (${p.property})` : p.property}
               </option>
-            );
-          })}
-        </select>
+            ))}
+          </select>
+        </div>
 
-        <select
-          className="border rounded px-2 py-1 min-w-[260px]"
-          value={siteUrl}
-          onChange={e => setSiteUrl(e.target.value)}
-        >
-          <option value="">— GSC (optional) —</option>
-          {gscSites.map(s => (
-            <option key={s.siteUrl} value={s.siteUrl}>
-              {s.siteUrl}
-            </option>
-          ))}
-        </select>
+        <div className="md:col-span-2">
+          <label className="block text-sm font-medium mb-1">GSC Site (optional)</label>
+          <select
+            className="w-full border rounded px-3 py-2"
+            value={siteUrl}
+            onChange={(e) => setSiteUrl(e.target.value)}
+          >
+            <option value="">— Not using GSC —</option>
+            {gscSites.map((s) => (
+              <option key={s.siteUrl} value={s.siteUrl}>
+                {s.siteUrl}
+              </option>
+            ))}
+          </select>
+        </div>
 
-        <input
-          type="date"
-          className="border rounded px-2 py-1"
-          value={startDate}
-          onChange={e => setStartDate(e.target.value)}
-        />
-        <input
-          type="date"
-          className="border rounded px-2 py-1"
-          value={endDate}
-          onChange={e => setEndDate(e.target.value)}
-        />
+        <div className="grid grid-cols-2 gap-3 md:col-span-1">
+          <div>
+            <label className="block text-sm font-medium mb-1">Start</label>
+            <input
+              type="date"
+              className="w-full border rounded px-3 py-2"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">End</label>
+            <input
+              type="date"
+              className="w-full border rounded px-3 py-2"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
+          </div>
+        </div>
 
-        <button
-          onClick={run}
-          disabled={!canRun || loading}
-          className="bg-purple-600 text-white px-4 py-2 rounded disabled:opacity-50"
-        >
-          {loading ? "Running…" : "Run"}
-        </button>
+        <div className="md:col-span-5">
+          <button
+            onClick={run}
+            className="mt-3 inline-flex items-center px-4 py-2 rounded bg-purple-600 text-white disabled:opacity-60"
+            disabled={loading}
+          >
+            {loading ? "Running…" : "Run"}
+          </button>
+        </div>
       </div>
 
-      {error && (
-        <pre className="text-sm text-red-600 whitespace-pre-wrap">{error}</pre>
+      {err && (
+        <div className="mt-4 text-red-600 whitespace-pre-wrap break-words">
+          {err}
+        </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="border rounded p-4">
+      {/* GA Panel */}
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="border rounded-lg p-4">
           <h2 className="font-medium mb-2">GA4 Sessions (by day)</h2>
-          {gaRows.length === 0 ? (
+          {ga.length === 0 ? (
             <div className="text-sm text-gray-500">No GA data</div>
           ) : (
-            <ul className="text-sm space-y-1">
-              {gaRows.map(r => (
-                <li key={r.date} className="flex justify-between">
-                  <span>{r.date}</span>
-                  <span>{r.sessions}</span>
-                </li>
-              ))}
-            </ul>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left border-b">
+                  <th className="py-1 pr-2">Date</th>
+                  <th className="py-1">Sessions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ga.map((r, i) => (
+                  <tr key={i} className="border-b last:border-0">
+                    <td className="py-1 pr-2">{r.date}</td>
+                    <td className="py-1">{formatNum(r.sessions)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
 
-        <div className="border rounded p-4">
+        {/* GSC Panel */}
+        <div className="border rounded-lg p-4">
           <h2 className="font-medium mb-2">GSC Clicks (by day)</h2>
-          {gscRows.length === 0 ? (
+          {gsc.length === 0 ? (
             <div className="text-sm text-gray-500">No GSC data</div>
           ) : (
-            <ul className="text-sm space-y-1">
-              {gscRows.map(r => (
-                <li key={r.date} className="grid grid-cols-5 gap-2">
-                  <span>{r.date}</span>
-                  <span className="text-right">{r.clicks}</span>
-                  <span className="text-right">{r.impressions}</span>
-                  <span className="text-right">{(r.ctr * 100).toFixed(2)}%</span>
-                  <span className="text-right">{r.position.toFixed(1)}</span>
-                </li>
-              ))}
-            </ul>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left border-b">
+                  <th className="py-1 pr-2">Date</th>
+                  <th className="py-1 pr-2">Clicks</th>
+                  <th className="py-1 pr-2">Impr.</th>
+                  <th className="py-1 pr-2">CTR</th>
+                  <th className="py-1">Avg Pos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {gsc.map((r, i) => (
+                  <tr key={i} className="border-b last:border-0">
+                    <td className="py-1 pr-2">{r.date}</td>
+                    <td className="py-1 pr-2">{formatNum(r.clicks)}</td>
+                    <td className="py-1 pr-2">{formatNum(r.impressions)}</td>
+                    <td className="py-1 pr-2">{(r.ctr ?? 0).toFixed(2)}%</td>
+                    <td className="py-1">{(r.position ?? 0).toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       </div>
-
-      <p className="text-xs text-gray-400">
-        Tip: If you see a 403 from GSC, switch the siteUrl to an entry that starts with
-        <code className="mx-1">sc-domain:</code> or the exact verified <code>https://</code> URL you have access to.
-      </p>
     </div>
   );
 }
