@@ -1,50 +1,84 @@
-import { useState } from "react";
+import * as React from "react";
+import { useSession, signIn, signOut } from "next-auth/react";
+import GSCSitePicker from "@/components/GSCSitePicker";
+
+type Row = {
+  query: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+};
 
 export default function TrackerPage() {
-  const [siteUrl, setSiteUrl] = useState<string>("");
-  const [rows, setRows] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const { data: session, status } = useSession();
+  const [siteUrl, setSiteUrl] = React.useState("");
+  const [rows, setRows] = React.useState<Row[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
 
   async function onRun() {
+    if (!siteUrl) {
+      alert("Pick a Search Console property first.");
+      return;
+    }
     try {
-      if (!siteUrl) {
-        alert("Pick a Search Console property first.");
-        return;
-      }
       setLoading(true);
+      setErr(null);
       setRows([]);
-
-      const params = new URLSearchParams({
-        siteUrl,
-        limit: "10", // API defaults ok; explicit is fine
-      });
-
-      const r = await fetch(`/api/google/gsc/top-queries?${params.toString()}`);
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-      setRows(Array.isArray(j?.rows) ? j.rows : []);
+      const res = await fetch(
+        `/api/tracker/run?siteUrl=${encodeURIComponent(siteUrl)}`
+      );
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error || "Failed to run tracker");
+      const out: Row[] = Array.isArray(j.rows)
+        ? j.rows
+        : Array.isArray(j) ? j : [];
+      setRows(out);
     } catch (e: any) {
-      alert(e?.message || "Failed to run tracker");
+      setErr(e?.message || "Failed to run tracker");
     } finally {
       setLoading(false);
     }
   }
 
+  if (status === "loading") {
+    return <div className="p-6">Loading…</div>;
+  }
+
+  if (!session) {
+    return (
+      <main className="p-6">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-xl font-semibold">Organic Tracker</h1>
+          <button
+            className="px-3 py-2 border rounded"
+            onClick={() => signIn("google")}
+          >
+            Sign in with Google
+          </button>
+        </div>
+        <p>Sign in to select a GSC property and run the tracker.</p>
+      </main>
+    );
+  }
+
   return (
     <main className="p-6">
-      <h1 className="text-xl font-semibold mb-4">Organic Tracker</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-xl font-semibold">Organic Tracker</h1>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-600">{session.user?.email}</span>
+          <button className="px-3 py-2 border rounded" onClick={() => signOut()}>
+            Sign out
+          </button>
+        </div>
+      </div>
 
       <div className="flex gap-2 items-center mb-4">
-        {/* Replace this select's options with your real SC properties */}
-        <select
-          value={siteUrl}
-          onChange={(e) => setSiteUrl(e.target.value)}
-          className="border rounded px-3 py-2"
-        >
-          <option value="">Select property…</option>
-          <option value="sc-domain:zentrades.pro">sc-domain:zentrades.pro</option>
-          {/* ... */}
-        </select>
+        <div className="min-w-[320px]">
+          <GSCSitePicker value={siteUrl} onChange={setSiteUrl} />
+        </div>
         <button
           onClick={onRun}
           disabled={loading || !siteUrl}
@@ -54,37 +88,52 @@ export default function TrackerPage() {
         </button>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="text-left border-b">
-              <th className="py-2 pr-4">Query</th>
-              <th className="py-2 pr-4">Clicks</th>
-              <th className="py-2 pr-4">Impr.</th>
-              <th className="py-2 pr-4">CTR</th>
-              <th className="py-2 pr-4">Avg Pos</th>
+      {err && (
+        <div className="mb-3 text-sm text-red-600">
+          {err}
+        </div>
+      )}
+
+      <div className="overflow-x-auto border rounded">
+        <table className="min-w-[720px] w-full text-sm">
+          <thead className="bg-gray-50 border-b">
+            <tr>
+              <th className="text-left px-3 py-2">Query</th>
+              <th className="text-right px-3 py-2">Clicks</th>
+              <th className="text-right px-3 py-2">Impr.</th>
+              <th className="text-right px-3 py-2">CTR</th>
+              <th className="text-right px-3 py-2">Avg Pos</th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {rows.length === 0 ? (
               <tr>
-                <td className="py-3 text-gray-500" colSpan={5}>
+                <td className="px-3 py-8 text-gray-500" colSpan={5}>
                   Run the tracker to see Top-10 queries.
                 </td>
               </tr>
+            ) : (
+              rows.map((r, i) => (
+                <tr key={i} className="border-b">
+                  <td className="px-3 py-2">{r.query}</td>
+                  <td className="px-3 py-2 text-right">{r.clicks}</td>
+                  <td className="px-3 py-2 text-right">{r.impressions}</td>
+                  <td className="px-3 py-2 text-right">
+                    {(r.ctr * 100).toFixed(2)}%
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {Number(r.position).toFixed(1)}
+                  </td>
+                </tr>
+              ))
             )}
-            {rows.map((r, i) => (
-              <tr key={i} className="border-b">
-                <td className="py-2 pr-4">{r.query}</td>
-                <td className="py-2 pr-4">{r.clicks}</td>
-                <td className="py-2 pr-4">{r.impressions}</td>
-                <td className="py-2 pr-4">{(Number(r.ctr) || 0).toFixed(2)}%</td>
-                <td className="py-2 pr-4">{(Number(r.position) || 0).toFixed(1)}</td>
-              </tr>
-            ))}
           </tbody>
         </table>
       </div>
+
+      <footer className="text-xs text-gray-500 mt-6">
+        © {new Date().getFullYear()} VSight — Unified Analytics
+      </footer>
     </main>
   );
 }
