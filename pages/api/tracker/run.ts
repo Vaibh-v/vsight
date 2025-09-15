@@ -1,55 +1,66 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getToken } from "next-auth/jwt";
-import { driveFindOrCreateSpreadsheet, sheetsAppend, gscTopQueries, serpTopUrl } from "@/lib/google";
+import { getServerSession } from "next-auth";
+import { authOptions } from "../auth/[...nextauth]";
 
-function iso(d?: string | Date) {
-  if (!d) return new Date().toISOString().slice(0,10);
-  const dt = typeof d === "string" ? new Date(d) : d;
-  return dt.toISOString().slice(0,10);
-}
+type SearchRow = {
+  keys: string[]; clicks: number; impressions: number; ctr: number; position: number;
+};
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const session = await getServerSession(req, res, authOptions as any);
+  const accessToken = (session as any)?.access_token as string | undefined;
+  if (!accessToken) return res.status(401).json({ error: "Not authenticated" });
+
   try {
-    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.access_token) return res.status(401).json({ error: "Not authenticated" });
-    if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+    const { siteUrl, startDate, endDate } = req.body ?? {};
+    if (!siteUrl) return res.status(400).json({ error: "Missing siteUrl" });
 
-    const { siteUrl, startDate, endDate, keywords, location, topN } = (req.body || {}) as {
-      siteUrl: string;
-      startDate: string;
-      endDate: string;
-      keywords?: string[];
-      location?: string;
-      topN?: number;
-    };
-    if (!siteUrl || !startDate || !endDate) return res.status(400).json({ error: "Missing siteUrl/startDate/endDate" });
+    // default to last 28 days
+    const end = endDate ?? new Date().toISOString().slice(0, 10);
+    const start = startDate ?? new Date(Date.now() - 27 * 86400000).toISOString().slice(0, 10);
 
-    const email = String((token as any).email || "user");
-    const start = iso(startDate);
-    const end = iso(endDate);
-    const limit = Number(topN || 10);
+    const api = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
+      siteUrl
+    )}/searchAnalytics/query`;
 
-    const all = await gscTopQueries(String(token.access_token), siteUrl, start, end, 1000);
-    const filtered = (keywords && keywords.length)
-      ? all.filter(r => keywords.some(k => r.query.toLowerCase().includes(k.toLowerCase())))
-      : all;
+    const r = await fetch(api, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        startDate: start,
+        endDate: end,
+        dimensions: ["query"],
+        rowLimit: 10,
+        startRow: 0,
+        dataState: "all", // include fresh data when available
+      }),
+    });
 
-    const key = `${email}|${siteUrl}|${start}|${end}|${(keywords||[]).join("|")}|${location||""}|${limit}`;
-    const values: any[][] = [];
-    for (const r of filtered.slice(0, Math.max(1, limit))) {
-      const topUrl = await serpTopUrl(r.query);
-      values.push([end, siteUrl, r.query, "", r.position, r.clicks, r.impressions, location || "", topUrl, key]);
+    const j = (await r.json()) as { rows?: SearchRow[]; error?: any };
+    if (!r.ok) {
+      return res.status(r.status).json({ error: j?.error?.message || "GSC query failed" });
     }
 
-    const spreadsheetId = await driveFindOrCreateSpreadsheet(String(token.access_token), `VSight_${email}`);
-    if (values.length) await sheetsAppend(String(token.access_token), spreadsheetId, "Tracker", values);
+    const rows =
+      (j.rows ?? []).map((row) => ({
+        query: row.keys?.[0] ?? "(not set)",
+        clicks: row.clicks ?? 0,
+        impressions: row.impressions ?? 0,
+        ctr: row.ctr ?? 0,
+        position: row.position ?? 0,
+      })) ?? [];
 
-    return res.status(200).json({
-      ok: true,
-      appended: values.length,
-      message: `Tracker: appended ${values.length} row(s) for ${siteUrl} (${start}..${end})`,
-    });
+    return res.status(200).json({ start, end, rows });
   } catch (e: any) {
-    return res.status(500).json({ error: e?.message || "Unexpected error" });
+    console.error("tracker/run error", e);
+    return res.status(500).json({ error: e?.message || "Internal error" });
   }
 }
