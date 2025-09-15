@@ -1,3 +1,4 @@
+// pages/api/aggregations/default.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
 import { gaRunReport, gscTimeseriesClicks } from "@/lib/google";
@@ -5,60 +6,55 @@ import { gaRunReport, gscTimeseriesClicks } from "@/lib/google";
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.access_token) return res.status(401).json({ error: "Not authenticated" });
+    if (!token?.access_token) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
 
-    const { propertyId, siteUrl, start, end } = req.query as {
+    const { propertyId, siteUrl, startDate, endDate } = req.query as {
       propertyId?: string;
       siteUrl?: string;
-      start?: string;
-      end?: string;
+      startDate?: string;
+      endDate?: string;
     };
 
-    const wantGA = Boolean(propertyId);
-    const wantGSC = Boolean(siteUrl);
+    const accessToken = String(token.access_token);
+    const wantGA = !!propertyId && !!startDate && !!endDate;
+    const wantGSC = !!siteUrl && !!startDate && !!endDate;
 
-    const [ga, gsc] = await Promise.all([
+    const [gaResp, gscRows] = await Promise.all([
       wantGA
-        ? gaRunReport(String(token.access_token), String(propertyId), {
+        ? gaRunReport(accessToken, String(propertyId), {
             dimensions: ["date"],
             metrics: ["sessions"],
-            dateRanges: [{ startDate: String(start), endDate: String(end) }],
+            dateRanges: [{ startDate: String(startDate), endDate: String(endDate) }],
           })
-        : Promise.resolve({ rows: [] }),
+        : Promise.resolve(null),
       wantGSC
-        ? gscTimeseriesClicks(String(token.access_token), String(siteUrl), {
-            startDate: String(start),
-            endDate: String(end),
+        // accepts either positional or object; we send object to match your last call-site
+        ? gscTimeseriesClicks(accessToken, String(siteUrl), {
+            startDate: String(startDate),
+            endDate: String(endDate),
           })
-        : Promise.resolve([]),
+        : Promise.resolve([] as any[]),
     ]);
 
-    // Normalize to a single array your front-end can render.
-    const out: Array<
-      { date: string; clicks: number; impressions: number; ctr: number; position: number }
-    > = [];
+    // Normalize GA rows -> { date, sessions }
+    const gaRows =
+      Array.isArray((gaResp as any)?.rows) && Array.isArray((gaResp as any)?.dimensionHeaders)
+        ? (gaResp as any).rows.map((r: any) => {
+            const dIdx = 0; // first dimension = date
+            const mIdx = 0; // first metric = sessions
+            const date = r.dimensionValues?.[dIdx]?.value || "";
+            const sessions = Number(r.metricValues?.[mIdx]?.value || 0);
+            return { date, sessions };
+          })
+        : [];
 
-    // GA rows come as { date: "YYYY-MM-DD", sessions: number }
-    if (Array.isArray(ga.rows)) {
-      for (const r of ga.rows) {
-        if (r.date) {
-          out.push({
-            date: r.date,
-            clicks: Number(r.sessions || 0), // map sessions -> clicks placeholder for unified chart
-            impressions: 0,
-            ctr: 0,
-            position: 0,
-          });
-        }
-      }
-    }
-
-    // GSC timeseries: { date, clicks, impressions, ctr, position }
-    if (Array.isArray(gsc)) {
-      for (const r of gsc) out.push(r);
-    }
-
-    return res.status(200).json(out);
+    // GSC rows already come as { date, clicks, impressions, ctr, position }
+    return res.status(200).json({
+      ga: { rows: gaRows },
+      gsc: { rows: gscRows },
+    });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || "Unexpected error" });
   }
