@@ -4,7 +4,7 @@ import crypto from "crypto";
 import { driveFindOrCreateSpreadsheet, sheetsAppend } from "@/lib/google";
 
 const ALG = "aes-256-gcm";
-const KEY = crypto.createHash("sha256").update(String(process.env.NEXTAUTH_SECRET || "vsight")).digest();
+const KEY = Buffer.from((process.env.KV_ENCRYPTION_KEY || "").padEnd(32, "0").slice(0, 32), "utf8");
 
 function encrypt(text: string) {
   const iv = crypto.randomBytes(12);
@@ -16,16 +16,19 @@ function encrypt(text: string) {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-  if (!token?.access_token) return res.status(401).json({ error: "Not authenticated" });
-
-  const email = String(token.email || "user");
-  const { key, value } = (req.body || {}) as any;
-  if (!key || typeof value !== "string") return res.status(400).json({ error: "Missing key/value" });
-
   try {
-    const spreadsheetId = await driveFindOrCreateSpreadsheet(String(token.access_token), `VSight_${email}`);
+    const token: any = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+    if (!token?.access_token) return res.status(401).json({ error: "Not authenticated" });
+
+    const email = String(token.email || "user");
+    const { key, value } = (req.body || {}) as any;
+    if (!key || typeof value !== "string") return res.status(400).json({ error: "Missing key/value" });
+
+    const { id: spreadsheetId } = await driveFindOrCreateSpreadsheet(
+      String(token.access_token),
+      `VSight_${email}`
+    );
+
     const secret = encrypt(value);
     await sheetsAppend(String(token.access_token), spreadsheetId, "Vault", [
       [key, secret, new Date().toISOString()],
