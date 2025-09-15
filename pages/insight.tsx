@@ -1,15 +1,12 @@
-import { useSession } from "next-auth/react";
-
+// pages/insight.tsx
 export default function Insight() {
-  const { status } = useSession();
   return (
-    <main className="max-w-5xl mx-auto p-6 space-y-4">
-      <h1 className="text-2xl font-semibold">AI Insight</h1>
-      {status !== "authenticated" ? (
-        <p>Please sign in on the Connections page.</p>
-      ) : (
-        <p>Insights are shown inside Dashboard after you select GA4 + GSC + dates. This page is a placeholder route so the nav link works.</p>
-      )}
-    </main>
+    <div className="max-w-3xl mx-auto px-4 py-8">
+      <h1 className="text-2xl font-semibold mb-2">AI Insight</h1>
+      <p className="text-sm text-gray-600">
+        Insights are generated after you run the <strong>Dashboard</strong> with a GA4 property and/or a GSC site and a date range.
+        This route exists so the nav link works. Once data is fetched on Dashboard, you can surface summaries there.
+      </p>
+    </div>
   );
 }
