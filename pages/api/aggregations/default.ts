@@ -3,65 +3,70 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
 import { gaRunReport, gscTimeseriesClicks } from "@/lib/google";
 
-// Shapes we expect back from lib/google
-type GaRow = { date: string; sessions: number };
-type GscRow = { date: string; clicks: number; impressions: number; ctr: number; position: number };
-
-// Normalize GA/GSC results so TypeScript and the client both get a stable shape
-function asGaRows(x: any): GaRow[] {
-  if (!x) return [];
-  if (Array.isArray(x)) return x as GaRow[];                 // some callers return rows directly
-  if (Array.isArray(x.rows)) return x.rows as GaRow[];       // our lib returns { rows }
-  return [];
-}
-function asGscRows(x: any): GscRow[] {
-  if (!x) return [];
-  if (Array.isArray(x)) return x as GscRow[];
-  if (Array.isArray(x.rows)) return x.rows as GscRow[];
-  return [];
-}
+type GaPoint = { date: string; sessions: number };
+type GscPoint = { date: string; clicks: number; impressions: number; ctr: number; position: number };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    if (req.method !== "GET") {
-      return res.status(405).json({ error: "Method not allowed" });
+    const token = await getToken({ req }) as any;
+    if (!token?.access_token) {
+      return res.status(401).json({ error: "Not authenticated" });
     }
 
-    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-    const accessToken = String(token?.access_token || "");
-    if (!accessToken) return res.status(401).json({ error: "Not authenticated" });
+    const { propertyId, siteUrl, startDate, endDate } = req.query as {
+      propertyId?: string;
+      siteUrl?: string;
+      startDate?: string;
+      endDate?: string;
+    };
 
-    const { propertyId, siteUrl, startDate, endDate } = req.query as any;
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: "Missing startDate/endDate" });
+    }
 
-    const end = String(endDate || new Date().toISOString().slice(0, 10));
-    const start =
-      String(startDate) ||
-      new Date(Date.now() - 27 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
+    const accessToken = String(token.access_token);
     const wantGA = !!propertyId;
     const wantGSC = !!siteUrl;
 
-    const [gaRaw, gscRaw] = await Promise.all([
-      wantGA
-        ? gaRunReport(accessToken, String(propertyId), {
-            // our lib accepts string[] (and also {name}[]), so keep it simple
-            dimensions: ["date"],
-            metrics: ["sessions"],
-            dateRanges: [{ startDate: start, endDate: end }],
-          })
-        : Promise.resolve({ rows: [] }),
-      wantGSC
-        ? gscTimeseriesClicks(accessToken, String(siteUrl), {
-            startDate: start,
-            endDate: end,
-          })
-        : Promise.resolve({ rows: [] }),
-    ]);
+    // ---- GA4: return array<GaPoint>
+    const gaPromise: Promise<GaPoint[]> = wantGA
+      ? gaRunReport(accessToken, String(propertyId), {
+          dimensions: ["date"],             // <— our lib accepts string[]
+          metrics: ["sessions"],
+          dateRanges: [{ startDate, endDate }],
+        }).then((rows: any[]) =>
+          rows.map((r: any) => ({
+            date: r?.date ?? "",
+            sessions: Number(r?.sessions ?? 0),
+          }))
+        )
+      : Promise.resolve([]);
 
-    const ga = asGaRows(gaRaw);
-    const gsc = asGscRows(gscRaw);
+    // ---- GSC: return array<GscPoint>
+    const gscPromise: Promise<GscPoint[]> = wantGSC
+      ? gscTimeseriesClicks(accessToken, String(siteUrl), {
+          startDate,
+          endDate,
+        }).then((result: { rows: GscPoint[] } | GscPoint[]) => {
+          // Handle either `{rows: []}` or `[]`
+          const rows = Array.isArray(result) ? result : Array.isArray((result as any)?.rows) ? (result as any).rows : [];
+          return rows.map((r: any) => ({
+            date: r?.date ?? "",
+            clicks: Number(r?.clicks ?? 0),
+            impressions: Number(r?.impressions ?? 0),
+            ctr: Number(r?.ctr ?? 0),
+            position: Number(r?.position ?? 0),
+          }));
+        })
+      : Promise.resolve([]);
 
-    return res.status(200).json({ ga, gsc });
+    const [ga, gsc] = await Promise.all([gaPromise, gscPromise]);
+
+    return res.status(200).json({
+      ok: true,
+      ga,   // array<GaPoint>
+      gsc,  // array<GscPoint>
+    });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || "Unexpected error" });
   }
