@@ -2,13 +2,7 @@ import * as React from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import GSCSitePicker from "@/components/GSCSitePicker";
 
-type Row = {
-  query: string;
-  clicks: number;
-  impressions: number;
-  ctr: number;
-  position: number;
-};
+type Row = { query: string; clicks: number; impressions: number; ctr: number; position: number };
 
 export default function TrackerPage() {
   const { data: session, status } = useSession();
@@ -18,23 +12,19 @@ export default function TrackerPage() {
   const [err, setErr] = React.useState<string | null>(null);
 
   async function onRun() {
-    if (!siteUrl) {
-      alert("Pick a Search Console property first.");
-      return;
-    }
+    if (!siteUrl) return alert("Pick a Search Console property first.");
     try {
       setLoading(true);
       setErr(null);
       setRows([]);
-      const res = await fetch(
-        `/api/tracker/run?siteUrl=${encodeURIComponent(siteUrl)}`
-      );
+      const res = await fetch("/api/tracker/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ siteUrl }),
+      });
       const j = await res.json();
       if (!res.ok) throw new Error(j?.error || "Failed to run tracker");
-      const out: Row[] = Array.isArray(j.rows)
-        ? j.rows
-        : Array.isArray(j) ? j : [];
-      setRows(out);
+      setRows(j.rows ?? []);
     } catch (e: any) {
       setErr(e?.message || "Failed to run tracker");
     } finally {
@@ -42,26 +32,19 @@ export default function TrackerPage() {
     }
   }
 
-  if (status === "loading") {
-    return <div className="p-6">Loading…</div>;
-  }
-
-  if (!session) {
+  if (status === "loading") return <div className="p-6">Loading…</div>;
+  if (!session)
     return (
       <main className="p-6">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-xl font-semibold">Organic Tracker</h1>
-          <button
-            className="px-3 py-2 border rounded"
-            onClick={() => signIn("google")}
-          >
+          <button className="px-3 py-2 border rounded" onClick={() => signIn("google")}>
             Sign in with Google
           </button>
         </div>
         <p>Sign in to select a GSC property and run the tracker.</p>
       </main>
     );
-  }
 
   return (
     <main className="p-6">
@@ -77,7 +60,7 @@ export default function TrackerPage() {
 
       <div className="flex gap-2 items-center mb-4">
         <div className="min-w-[320px]">
-          <GSCSitePicker value={siteUrl} onChange={setSiteUrl} />
+          <GSCSitePicker value={siteUrl} onChange={setSiteUrl} placeholder="Select a GSC property…" />
         </div>
         <button
           onClick={onRun}
@@ -88,11 +71,7 @@ export default function TrackerPage() {
         </button>
       </div>
 
-      {err && (
-        <div className="mb-3 text-sm text-red-600">
-          {err}
-        </div>
-      )}
+      {err && <div className="mb-3 text-sm text-red-600">{err}</div>}
 
       <div className="overflow-x-auto border rounded">
         <table className="min-w-[720px] w-full text-sm">
@@ -118,12 +97,8 @@ export default function TrackerPage() {
                   <td className="px-3 py-2">{r.query}</td>
                   <td className="px-3 py-2 text-right">{r.clicks}</td>
                   <td className="px-3 py-2 text-right">{r.impressions}</td>
-                  <td className="px-3 py-2 text-right">
-                    {(r.ctr * 100).toFixed(2)}%
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {Number(r.position).toFixed(1)}
-                  </td>
+                  <td className="px-3 py-2 text-right">{(r.ctr * 100).toFixed(2)}%</td>
+                  <td className="px-3 py-2 text-right">{Number(r.position).toFixed(1)}</td>
                 </tr>
               ))
             )}
@@ -131,9 +106,7 @@ export default function TrackerPage() {
         </table>
       </div>
 
-      <footer className="text-xs text-gray-500 mt-6">
-        © {new Date().getFullYear()} VSight — Unified Analytics
-      </footer>
+      <footer className="text-xs text-gray-500 mt-6">© {new Date().getFullYear()} VSight — Unified Analytics</footer>
     </main>
   );
 }
