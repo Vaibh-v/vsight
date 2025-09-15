@@ -1,3 +1,4 @@
+// pages/api/gsc/top-queries.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
 import { gscTopQueries } from "@/lib/google";
@@ -9,29 +10,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(401).json({ error: "Not authenticated" });
     }
 
-    const { siteUrl, startDate, endDate, limit } = (req.query || {}) as Record<string, string>;
-    if (!siteUrl || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing siteUrl/startDate/endDate" });
+    // Accept both styles: start/end OR startDate/endDate, and rowLimit OR limit
+    const siteUrl =
+      (req.query.siteUrl as string | undefined) ?? (req.query.site as string | undefined);
+    const start =
+      (req.query.start as string | undefined) ?? (req.query.startDate as string | undefined);
+    const end =
+      (req.query.end as string | undefined) ?? (req.query.endDate as string | undefined);
+
+    // Prefer ?limit=, but tolerate legacy ?rowLimit=
+    const limitParam =
+      (req.query.limit as string | undefined) ?? (req.query.rowLimit as string | undefined);
+    const limit = limitParam ? Number(limitParam) : 1000;
+
+    if (!siteUrl || !start || !end) {
+      return res.status(400).json({ error: "Missing siteUrl/start/end" });
     }
 
-    const rowLimit = limit ? Number(limit) : 1000;
-
-    // No `dimensions` prop — handled inside gscTopQueries()
-    const data = await gscTopQueries(token.access_token as string, siteUrl, {
-      startDate,
-      endDate,
-      rowLimit,
-      type: "web",
+    const rows = await gscTopQueries(String(token.access_token), String(siteUrl), {
+      startDate: String(start),
+      endDate: String(end),
+      limit,
     });
-
-    const rawRows = Array.isArray((data as any)?.rows) ? (data as any).rows : [];
-    const rows = rawRows.map((r: any) => ({
-      query: r?.keys?.[0] ?? "",
-      clicks: Number(r?.clicks ?? 0),
-      impressions: Number(r?.impressions ?? 0),
-      ctr: Number(r?.ctr ?? 0),
-      position: Number(r?.position ?? 0),
-    }));
 
     return res.status(200).json({ rows });
   } catch (e: any) {
