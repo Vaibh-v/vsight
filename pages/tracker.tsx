@@ -110,7 +110,10 @@ export default function TrackerPage() {
           <input className="w-full border rounded px-3 py-2" type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)}/>
         </div>
         <div>
-          <label className="block text-sm mb-1">Country</label>
+          <CountrySelect
+  value={countryCode || undefined}
+  onChange={(v) => setCountryCode(v ?? "")}
+/>
           <CountrySelect value={countryCode} onChange={setCountryCode} />
         </div>
         <div>
