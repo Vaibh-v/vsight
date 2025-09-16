@@ -48,3 +48,6 @@ export function BarChartMini({ labels, data, height = 220, title }: BarProps) {
     />
   );
 }
+// --- at the very bottom of components/ChartKit.tsx ---
+export const LineChartModern = LineChartMini;
+export const BarChartModern  = BarChartMini;
