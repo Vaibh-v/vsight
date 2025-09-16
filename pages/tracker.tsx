@@ -15,7 +15,7 @@ export default function TrackerPage() {
   const [keywordMode, setKeywordMode] = useState<"contains" | "equals">("contains");
   const [dimension, setDimension] = useState<"QUERY" | "PAGE" | "COUNTRY" | "DEVICE">("QUERY");
   const [device, setDevice] = useState<"" | "DESKTOP" | "MOBILE" | "TABLET">("");
-  const [countryCode, setCountryCode] = useState<string | undefined>(undefined); // <-- accepts undefined
+  const [countryCode, setCountryCode] = useState<string | undefined>(undefined);
   const [rowLimit, setRowLimit] = useState<number>(25);
   const [sortKey, setSortKey] = useState<"clicks" | "impressions" | "ctr" | "position">("clicks");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -23,7 +23,6 @@ export default function TrackerPage() {
   const [rows, setRows] = useState<Row[]>([]);
 
   useEffect(() => {
-    // default last 28 days
     const endD = new Date();
     const startD = new Date();
     startD.setDate(endD.getDate() - 28);
@@ -31,10 +30,7 @@ export default function TrackerPage() {
     setStart(startD.toISOString().slice(0, 10));
   }, []);
 
-  const top10 = useMemo(
-    () => rows.slice(0, 10),
-    [rows]
-  );
+  const top10 = useMemo(() => rows.slice(0, 10), [rows]);
 
   async function run() {
     if (!siteUrl || !start || !end) return;
@@ -45,26 +41,22 @@ export default function TrackerPage() {
         startDate: start,
         endDate: end,
         rowLimit,
-        dimension, // server can map to GSC dim
+        dimension,
         keyword,
         keywordMode,
         sortKey,
         sortDir,
       };
       if (device) body.device = device;
-      if (countryCode) body.country = countryCode; // e.g. "COUNTRY_US"
+      if (countryCode) body.country = countryCode;
 
-      // NOTE: keep this endpoint name matching your existing API route
       const res = await fetch("/api/gsc/tracker", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
 
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(await res.text());
       const data = (await res.json()) as { rows: Row[] };
       setRows(Array.isArray(data.rows) ? data.rows : []);
     } catch (e) {
@@ -78,9 +70,14 @@ export default function TrackerPage() {
   function downloadCSV() {
     const header = "key,clicks,impressions,ctr,position\n";
     const lines = rows.map(
-      (r) => `"${(r.key || "").replace(/"/g, '""')}",${r.clicks},${r.impressions},${(r.ctr * 100).toFixed(2)}%,${r.position.toFixed(1)}`
+      (r) =>
+        `"${(r.key || "").replace(/"/g, '""')}",${r.clicks},${r.impressions},${(r.ctr * 100).toFixed(
+          2
+        )}%,${r.position.toFixed(1)}`
     );
-    const blob = new Blob([header + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob([header + lines.join("\n")], {
+      type: "text/csv;charset=utf-8",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -93,10 +90,7 @@ export default function TrackerPage() {
   if (!session) {
     return (
       <div className="p-6">
-        <button
-          onClick={() => signIn("google")}
-          className="px-4 py-2 rounded bg-black text-white"
-        >
+        <button onClick={() => signIn("google")} className="px-4 py-2 rounded bg-black text-white">
           Sign in with Google
         </button>
       </div>
@@ -107,7 +101,6 @@ export default function TrackerPage() {
     <div className="p-6 space-y-6">
       <h1 className="text-xl font-semibold">Organic Tracker</h1>
 
-      {/* Controls */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
         <div>
           <label className="block text-sm mb-1">GSC Property</label>
@@ -240,11 +233,12 @@ export default function TrackerPage() {
         </button>
         <div className="ml-auto text-sm text-gray-500">
           {session?.user?.email}{" "}
-          <button className="underline" onClick={() => signOut()}>Sign out</button>
+          <button className="underline" onClick={() => signOut()}>
+            Sign out
+          </button>
         </div>
       </div>
 
-      {/* Results */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 overflow-auto rounded-lg border border-gray-200">
           <table className="min-w-full text-sm">
