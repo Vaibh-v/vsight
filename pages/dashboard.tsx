@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import GSCSitePicker from "@/components/GSCSitePicker";
-import { LineChart } from "@/components/CanvasChart";
+import { LineChartModern } from "@/components/ChartKit";
 
 type GAProperty = { name: string; propertyId: string; displayName?: string };
 
@@ -32,9 +32,7 @@ export default function DashboardPage() {
 
   async function run() {
     try {
-      setLoading(true);
-      setErr(null);
-      setGaSeries([]); setGscSeries([]); setGaTopPages([]); setGscTopQueries([]);
+      setLoading(true); setErr(null);
       const res = await fetch("/api/dashboard/run", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gaProperty: gaProp || null, gscSite: gscSite || null, start, end }),
@@ -45,30 +43,28 @@ export default function DashboardPage() {
       setGaTopPages(j.ga?.topPages ?? []);
       setGscSeries(j.gsc?.series ?? []);
       setGscTopQueries(j.gsc?.topQueries ?? []);
-    } catch (e: any) {
-      setErr(e?.message || "Run failed");
-    } finally {
-      setLoading(false);
-    }
+    } catch (e:any) {
+      setErr(e.message || "Run failed");
+    } finally { setLoading(false); }
   }
 
   if (status === "loading") return <div className="p-6">Loading…</div>;
-  if (!session)
+  if (!session) {
     return (
       <main className="p-6">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-xl font-semibold">Default Dashboard</h1>
-          <button className="px-3 py-2 border rounded" onClick={() => signIn("google")}>
-            Sign in with Google
-          </button>
+          <button className="px-3 py-2 border rounded" onClick={() => signIn("google")}>Sign in with Google</button>
         </div>
       </main>
     );
+  }
 
-  const gaSessions = gaSeries.map(d => d.sessions ?? 0);
-  const gaUsers = gaSeries.map(d => d.users ?? 0);
-  const gscClicks = gscSeries.map(d => d.clicks ?? 0);
-  const gscImpr = gscSeries.map(d => d.impressions ?? 0);
+  const labels = (gaSeries.length ? gaSeries : gscSeries).map((d:any) => d.date?.slice(5) ?? "");
+  const gaSessions = gaSeries.map((d:any) => d.sessions ?? 0);
+  const gaUsers = gaSeries.map((d:any) => d.users ?? 0);
+  const gscClicks = gscSeries.map((d:any) => d.clicks ?? 0);
+  const gscImpr = gscSeries.map((d:any) => d.impressions ?? 0);
 
   return (
     <main className="p-6">
@@ -86,9 +82,7 @@ export default function DashboardPage() {
           <label className="block text-sm mb-1">GA4 Property (optional)</label>
           <select className="w-full border rounded px-3 py-2" value={gaProp} onChange={(e)=>setGaProp(e.target.value)}>
             <option value="">— Not using GA4 —</option>
-            {gaProps.map((p) => (
-              <option key={p.propertyId} value={p.propertyId}>{p.displayName || p.name} (ID: {p.propertyId})</option>
-            ))}
+            {gaProps.map((p) => <option key={p.propertyId} value={p.propertyId}>{p.displayName || p.name} (ID: {p.propertyId})</option>)}
           </select>
         </div>
         <div>
@@ -110,35 +104,33 @@ export default function DashboardPage() {
       </button>
       {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
 
-      {/* Charts */}
+      {/* Modern charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
         <div className="border rounded p-3">
           <div className="font-medium mb-2">GA4 Sessions (by day)</div>
-          <LineChart values={gaSessions} />
+          <LineChartModern labels={labels} series={[{ label: "Sessions", data: gaSessions }]} />
         </div>
         <div className="border rounded p-3">
           <div className="font-medium mb-2">GA4 Active Users (by day)</div>
-          <LineChart values={gaUsers} />
+          <LineChartModern labels={labels} series={[{ label: "Users", data: gaUsers }]} />
         </div>
         <div className="border rounded p-3">
           <div className="font-medium mb-2">GSC Clicks (by day)</div>
-          <LineChart values={gscClicks} />
+          <LineChartModern labels={labels} series={[{ label: "Clicks", data: gscClicks }]} />
         </div>
         <div className="border rounded p-3">
           <div className="font-medium mb-2">GSC Impressions (by day)</div>
-          <LineChart values={gscImpr} />
+          <LineChartModern labels={labels} series={[{ label: "Impressions", data: gscImpr }]} />
         </div>
       </div>
 
-      {/* Tables */}
+      {/* Tables (unchanged) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
         <div className="border rounded p-3">
           <div className="font-medium mb-2">GA4 Top Pages</div>
-          {gaTopPages.length === 0 ? (
-            <div className="text-sm text-gray-500">No GA data</div>
-          ) : (
+          {gaTopPages.length === 0 ? <div className="text-sm text-gray-500">No GA data</div> : (
             <ul className="text-sm">
-              {gaTopPages.map((d, i) => (
+              {gaTopPages.map((d:any, i:number) => (
                 <li key={i} className="flex justify-between border-b py-1">
                   <span className="truncate max-w-[70%]" title={d.path}>{d.path}</span>
                   <span>{d.sessions}</span>
@@ -150,15 +142,13 @@ export default function DashboardPage() {
 
         <div className="border rounded p-3">
           <div className="font-medium mb-2">GSC Top Queries</div>
-          {gscTopQueries.length === 0 ? (
-            <div className="text-sm text-gray-500">No GSC data</div>
-          ) : (
+          {gscTopQueries.length === 0 ? <div className="text-sm text-gray-500">No GSC data</div> : (
             <table className="w-full text-sm">
               <thead className="border-b">
                 <tr><th className="text-left py-1">Query</th><th className="text-right py-1">Clicks</th><th className="text-right py-1">Impr.</th><th className="text-right py-1">CTR</th><th className="text-right py-1">Pos</th></tr>
               </thead>
               <tbody>
-                {gscTopQueries.map((q: any, i: number) => (
+                {gscTopQueries.map((q:any, i:number) => (
                   <tr key={i} className="border-b">
                     <td className="py-1 pr-2">{q.query}</td>
                     <td className="py-1 text-right">{q.clicks}</td>
