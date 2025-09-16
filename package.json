@@ -19,7 +19,8 @@
     "zod": "3.23.8",
     "recharts": "2.12.7",
     "swr": "2.2.5",
-    "chart.js": "^4.4.3"
+    "chart.js": "^4.4.4",
+    "react-chartjs-2": "^5.2.0"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "9.0.5",
