@@ -1,192 +1,136 @@
-// pages/dashboard.tsx
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
-import GSCSitePicker from "@/components/GSCSitePicker"; // existing
-import MiniLine from "@/components/MiniLine";
-import { fetchJSON, toYmd, safeNum, assertDateString } from "@/lib/fetcher";
+import GAPropertyPicker from "@/components/GAPropertyPicker";
+import GSCSitePicker from "@/components/GSCSitePicker";
+import { LineChartMini } from "@/components/ChartKit";
 
-type SeriesResp = { labels: string[]; values: number[] };
-type TableRow = { name: string; value: number };
-type QueryRow = { query: string; clicks: number; impressions: number; ctr: number; position: number };
+type SeriesPoint = { date: string; value: number };
 
 export default function Dashboard() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const [gaPropertyId, setGaPropertyId] = useState<string>("");
-  const [gscSite, setGscSite] = useState<string>("");
-  const [start, setStart] = useState<string>(() => {
-    const d = new Date(); d.setDate(d.getDate() - 28); return toYmd(d);
-  });
-  const [end, setEnd] = useState<string>(() => toYmd(new Date()));
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [gscSiteUrl, setGscSiteUrl] = useState<string>("");
+  const [start, setStart] = useState<string>("2025-08-20");
+  const [end, setEnd] = useState<string>("2025-09-16");
 
-  // Data
-  const [gaSessions, setGaSessions] = useState<number[]>([]);
-  const [gaActive, setGaActive] = useState<number[]>([]);
-  const [gscClicks, setGscClicks] = useState<number[]>([]);
-  const [gscImpr, setGscImpr] = useState<number[]>([]);
-  const [gaTopPages, setGaTopPages] = useState<TableRow[]>([]);
-  const [gscTopQueries, setGscTopQueries] = useState<QueryRow[]>([]);
-
-  const canRun = !!session;
+  const [gaSessions, setGaSessions] = useState<SeriesPoint[]>([]);
+  const [gaUsers, setGaUsers] = useState<SeriesPoint[]>([]);
+  const [gscClicks, setGscClicks] = useState<SeriesPoint[]>([]);
+  const [gscImpr, setGscImpr] = useState<SeriesPoint[]>([]);
+  const [gscTop, setGscTop] = useState<Array<{ query: string; clicks: number; impressions: number; ctr: number; position: number }>>([]);
 
   async function run() {
     try {
-      setError("");
-      setLoading(true);
-      assertDateString(start, "Start");
-      assertDateString(end, "End");
+      const body = { start, end, gaPropertyId, gscSiteUrl };
 
-      // Parallel calls, but only when a key is provided.
-      const tasks: Promise<any>[] = [];
-
+      // GA4
       if (gaPropertyId) {
-        tasks.push(
-          (async () => {
-            const s1 = await fetchJSON<SeriesResp>(`/api/ga4/timeseries?propertyId=${encodeURIComponent(gaPropertyId)}&metric=sessions&start=${start}&end=${end}`);
-            const s2 = await fetchJSON<SeriesResp>(`/api/ga4/timeseries?propertyId=${encodeURIComponent(gaPropertyId)}&metric=activeUsers&start=${start}&end=${end}`);
-            setGaSessions(s1.values.map(v => safeNum(v)));
-            setGaActive(s2.values.map(v => safeNum(v)));
-
-            const top = await fetchJSON<{ rows: { name: string; value: number }[] }>(`/api/ga4/top-pages?propertyId=${encodeURIComponent(gaPropertyId)}&start=${start}&end=${end}`);
-            setGaTopPages(top.rows || []);
-          })()
-        );
+        const [sess, users] = await Promise.all([
+          fetch("/api/ga4/timeseries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, metric: "sessions" }) }).then(r => r.json()),
+          fetch("/api/ga4/timeseries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, metric: "activeUsers" }) }).then(r => r.json()),
+        ]);
+        setGaSessions(sess.points ?? []);
+        setGaUsers(users.points ?? []);
       } else {
-        setGaSessions([]); setGaActive([]); setGaTopPages([]);
+        setGaSessions([]);
+        setGaUsers([]);
       }
 
-      if (gscSite) {
-        tasks.push(
-          (async () => {
-            const c = await fetchJSON<SeriesResp>(`/api/gsc/timeseries?site=${encodeURIComponent(gscSite)}&metric=clicks&start=${start}&end=${end}`);
-            const i = await fetchJSON<SeriesResp>(`/api/gsc/timeseries?site=${encodeURIComponent(gscSite)}&metric=impressions&start=${start}&end=${end}`);
-            setGscClicks(c.values.map(v => safeNum(v)));
-            setGscImpr(i.values.map(v => safeNum(v)));
-
-            const q = await fetchJSON<{ rows: QueryRow[] }>(`/api/gsc/top-queries?site=${encodeURIComponent(gscSite)}&start=${start}&end=${end}`);
-            setGscTopQueries(q.rows || []);
-          })()
-        );
+      // GSC
+      if (gscSiteUrl) {
+        const [clicks, impr, top] = await Promise.all([
+          fetch("/api/gsc/timeseries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ siteUrl: gscSiteUrl, start, end, metric: "clicks" }) }).then(r => r.json()),
+          fetch("/api/gsc/timeseries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ siteUrl: gscSiteUrl, start, end, metric: "impressions" }) }).then(r => r.json()),
+          fetch("/api/gsc/top-queries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ siteUrl: gscSiteUrl, start, end, rowLimit: 10 }) }).then(r => r.json()),
+        ]);
+        setGscClicks(clicks.points ?? []);
+        setGscImpr(impr.points ?? []);
+        setGscTop(top.rows ?? []);
       } else {
-        setGscClicks([]); setGscImpr([]); setGscTopQueries([]);
+        setGscClicks([]);
+        setGscImpr([]);
+        setGscTop([]);
       }
-
-      await Promise.all(tasks);
-    } catch (e:any) {
-      setError(e.message || String(e));
-    } finally {
-      setLoading(false);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to run dashboard. See console for details.");
     }
   }
 
-  useEffect(() => {
-    // Auto-run only if at least one source is selected
-    if (gaPropertyId || gscSite) run();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  if (status === "loading") return null;
+  if (!session) return <div className="p-6"><button className="px-3 py-2 rounded bg-black text-white" onClick={() => signIn()}>Sign in</button></div>;
 
-  if (!session) {
-    return (
-      <div className="max-w-5xl mx-auto p-6">
-        <div className="text-xl mb-4">Dashboard</div>
-        <button className="px-3 py-2 bg-black text-white rounded" onClick={() => signIn()}>Sign in</button>
-      </div>
-    );
-  }
+  const labels = (arr: SeriesPoint[]) => arr.map(p => p.date);
+  const values = (arr: SeriesPoint[]) => arr.map(p => p.value);
 
   return (
-    <div className="max-w-[1200px] mx-auto p-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+    <div className="p-6 space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm mb-1">GA4 Property ID (optional)</label>
-          <input
-            value={gaPropertyId}
-            onChange={e => setGaPropertyId(e.target.value.trim())}
-            placeholder="ex: 3765969838"
-            className="w-full border rounded px-3 py-2"
-          />
+          <label className="block text-sm mb-1">GA4 Property</label>
+          <GAPropertyPicker value={gaPropertyId} onChange={setGaPropertyId} />
         </div>
         <div>
           <label className="block text-sm mb-1">GSC Site (optional)</label>
-          <GSCSitePicker value={gscSite} onChange={setGscSite} />
+          <GSCSitePicker value={gscSiteUrl} onChange={setGscSiteUrl} />
         </div>
-
         <div>
           <label className="block text-sm mb-1">Start</label>
-          <input type="date" value={start} onChange={e => setStart(e.target.value)} className="border rounded px-3 py-2" />
+          <input value={start} onChange={e => setStart(e.target.value)} type="date" className="border rounded px-2 py-1 w-full" />
         </div>
         <div>
           <label className="block text-sm mb-1">End</label>
-          <input type="date" value={end} onChange={e => setEnd(e.target.value)} className="border rounded px-3 py-2" />
+          <input value={end} onChange={e => setEnd(e.target.value)} type="date" className="border rounded px-2 py-1 w-full" />
         </div>
       </div>
 
-      <div className="mt-4 flex gap-3">
-        <button onClick={run} disabled={loading || !canRun}
-          className="px-3 py-2 rounded bg-violet-600 text-white disabled:opacity-60">Run</button>
-        {error && <div className="text-red-600 text-sm">{error}</div>}
-      </div>
+      <button onClick={run} className="px-3 py-2 rounded bg-violet-600 text-white">Run</button>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-        <div>
-          <div className="mb-2 font-medium">GA4 Sessions (by day)</div>
-          <MiniLine data={gaSessions} />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="border rounded p-3">
+          <div className="font-medium mb-2">GA4 Sessions (by day)</div>
+          <LineChartMini labels={labels(gaSessions)} data={values(gaSessions)} />
         </div>
-        <div>
-          <div className="mb-2 font-medium">GA4 Active Users (by day)</div>
-          <MiniLine data={gaActive} />
+        <div className="border rounded p-3">
+          <div className="font-medium mb-2">GA4 Active Users (by day)</div>
+          <LineChartMini labels={labels(gaUsers)} data={values(gaUsers)} />
         </div>
-        <div>
-          <div className="mb-2 font-medium">GSC Clicks (by day)</div>
-          <MiniLine data={gscClicks} />
+        <div className="border rounded p-3">
+          <div className="font-medium mb-2">GSC Clicks (by day)</div>
+          <LineChartMini labels={labels(gscClicks)} data={values(gscClicks)} />
         </div>
-        <div>
-          <div className="mb-2 font-medium">GSC Impressions (by day)</div>
-          <MiniLine data={gscImpr} />
+        <div className="border rounded p-3">
+          <div className="font-medium mb-2">GSC Impressions (by day)</div>
+          <LineChartMini labels={labels(gscImpr)} data={values(gscImpr)} />
         </div>
       </div>
 
-      {/* Tables */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-        <div className="border rounded">
-          <div className="px-3 py-2 font-medium border-b">GA4 Top Pages</div>
-          <table className="w-full text-sm">
-            <tbody>
-              {gaTopPages?.map((r, i) => (
-                <tr key={i} className="border-b last:border-0">
-                  <td className="px-3 py-2 truncate">{r.name}</td>
-                  <td className="px-3 py-2 text-right">{safeNum(r.value, 0)}</td>
-                </tr>
-              ))}
-              {!gaTopPages?.length && <tr><td className="px-3 py-3 text-gray-400">No data</td></tr>}
-            </tbody>
-          </table>
-        </div>
-        <div className="border rounded">
-          <div className="px-3 py-2 font-medium border-b">GSC Top Queries</div>
-          <table className="w-full text-sm">
+      <div className="border rounded p-3">
+        <div className="font-medium mb-2">GSC Top Queries</div>
+        <div className="overflow-auto">
+          <table className="min-w-[600px] w-full text-sm">
             <thead>
-              <tr className="text-left">
-                <th className="px-3 py-2">Query</th>
-                <th className="px-3 py-2 text-right">Clicks</th>
-                <th className="px-3 py-2 text-right">Impr.</th>
-                <th className="px-3 py-2 text-right">CTR</th>
-                <th className="px-3 py-2 text-right">Pos</th>
+              <tr className="text-left border-b">
+                <th className="py-2 pr-4">Query</th>
+                <th className="py-2 pr-4">Clicks</th>
+                <th className="py-2 pr-4">Impr.</th>
+                <th className="py-2 pr-4">CTR</th>
+                <th className="py-2 pr-4">Pos</th>
               </tr>
             </thead>
             <tbody>
-              {gscTopQueries?.map((r, i) => (
-                <tr key={i} className="border-b last:border-0">
-                  <td className="px-3 py-2 truncate">{r.query}</td>
-                  <td className="px-3 py-2 text-right">{safeNum(r.clicks, 0)}</td>
-                  <td className="px-3 py-2 text-right">{safeNum(r.impressions, 0)}</td>
-                  <td className="px-3 py-2 text-right">{safeNum(r.ctr * 100, 1)}%</td>
-                  <td className="px-3 py-2 text-right">{safeNum(r.position, 1)}</td>
+              {gscTop.map((r, i) => (
+                <tr key={i} className="border-b last:border-b-0">
+                  <td className="py-2 pr-4">{r.query}</td>
+                  <td className="py-2 pr-4">{r.clicks}</td>
+                  <td className="py-2 pr-4">{r.impressions}</td>
+                  <td className="py-2 pr-4">{(r.ctr * 100).toFixed(1)}%</td>
+                  <td className="py-2 pr-4">{r.position.toFixed(1)}</td>
                 </tr>
               ))}
-              {!gscTopQueries?.length && <tr><td className="px-3 py-3 text-gray-400">No data</td></tr>}
+              {gscTop.length === 0 && (
+                <tr><td className="py-6 text-gray-500" colSpan={5}>No data</td></tr>
+              )}
             </tbody>
           </table>
         </div>
