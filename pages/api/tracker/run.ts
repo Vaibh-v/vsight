@@ -6,6 +6,21 @@ type SearchRow = {
   keys: string[]; clicks: number; impressions: number; ctr: number; position: number;
 };
 
+// Minimal 2-letter → 3-letter map for common cases; extend as needed.
+const ISO2_TO_ISO3: Record<string, string> = {
+  US: "USA", IN: "IND", GB: "GBR", UK: "GBR", CA: "CAN", AU: "AUS", NZ: "NZL",
+  DE: "DEU", FR: "FRA", ES: "ESP", IT: "ITA", NL: "NLD", BR: "BRA", MX: "MEX",
+  ZA: "ZAF", SG: "SGP", AE: "ARE"
+};
+
+function normalizeCountryToISO3(input?: string): string | null {
+  if (!input) return null;
+  const v = input.trim().toUpperCase().replace(/^COUNTRY_/, "");
+  if (v.length === 3) return v;         // already alpha-3 (e.g., USA)
+  if (v.length === 2) return ISO2_TO_ISO3[v] ?? null;
+  return null;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -23,12 +38,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       endDate,
       rowLimit = 25,
       startRow = 0,
-      country,         // e.g. "USA" (ISO-3166 alpha-3) or "COUNTRY_IN" (GSC format) – we normalize below
-      device,          // "DESKTOP" | "MOBILE" | "TABLET"
+      country,         // e.g. US / USA
+      device,          // DESKTOP | MOBILE | TABLET
       query,           // keyword filter string
-      queryMatch = "contains", // "contains" | "equals"
-      dimension = "query",     // "query" | "page"
-      sortBy = "clicks",       // sort client-side
+      queryMatch = "contains", // contains | equals
+      dimension = "query",     // query | page
+      sortBy = "clicks",
       sortDir = "desc"
     } = req.body ?? {};
 
@@ -37,16 +52,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const end = (endDate ?? new Date().toISOString().slice(0, 10));
     const start = (startDate ?? new Date(Date.now() - 27 * 86400000).toISOString().slice(0, 10));
 
-    // Build filters (GSC v3)
+    // Build GSC filters
     const filters: any[] = [];
-    if (country) {
-      // Accept "US" / "USA" / "COUNTRY_US" — normalize to "COUNTRY_XX"
-      const cc = String(country).toUpperCase().replace(/^COUNTRY_/, "");
-      const alpha2 = cc.length === 2 ? cc : cc === "USA" ? "US" : cc; // minimal normalize
-      filters.push({ dimension: "country", operator: "equals", expression: `COUNTRY_${alpha2}` });
+    const countryISO3 = normalizeCountryToISO3(country);
+    if (countryISO3) {
+      // GSC 'country' expects alpha-3 like "USA", "IND"
+      filters.push({ dimension: "country", operator: "equals", expression: countryISO3 });
     }
     if (device) {
-      filters.push({ dimension: "device", operator: "equals", expression: device.toUpperCase() });
+      filters.push({ dimension: "device", operator: "equals", expression: String(device).toUpperCase() });
     }
     if (query) {
       filters.push({
@@ -79,14 +93,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     let rows =
       (j.rows ?? []).map((row) => ({
-        key: row.keys?.[0] ?? "(not set)",
+        key: row.keys?.[0] ?? (dimension === "page" ? "(page not set)" : "(query not set)"),
         clicks: row.clicks ?? 0,
         impressions: row.impressions ?? 0,
         ctr: row.ctr ?? 0,
         position: row.position ?? 0,
       })) ?? [];
 
-    // client-side sort for convenience
     const dir = String(sortDir).toLowerCase() === "asc" ? 1 : -1;
     rows = rows.sort((a: any, b: any) => {
       const av = a[sortBy as keyof typeof a]; const bv = b[sortBy as keyof typeof b];
