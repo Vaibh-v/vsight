@@ -52,7 +52,7 @@ const OPTIONS: Array<{ code: string; label: string }> = [
   { code: "COUNTRY_EG", label: "Egypt" },
   { code: "COUNTRY_SA", label: "Saudi Arabia" },
   { code: "COUNTRY_QA", label: "Qatar" },
-  { code: "COUNTRY_KW", label: "Kuwait" },
+  { code: "COUNTRY_KW", label: "Kuwait" }
 ];
 
 export default function CountrySelect({ value, onChange, className, disabled }: Props) {
