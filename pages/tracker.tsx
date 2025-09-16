@@ -1,7 +1,8 @@
 import * as React from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import GSCSitePicker from "@/components/GSCSitePicker";
-import { HBarChart } from "@/components/CanvasChart";
+import CountrySelect from "@/components/CountrySelect";
+import { BarChartModern } from "@/components/ChartKit";
 
 type Row = { key: string; clicks: number; impressions: number; ctr: number; position: number };
 
@@ -18,7 +19,7 @@ export default function TrackerPage() {
   const [startDate, setStartDate] = React.useState(() => new Date(Date.now() - 27*86400000).toISOString().slice(0,10));
   const [endDate, setEndDate] = React.useState(() => new Date().toISOString().slice(0,10));
   const [dimension, setDimension] = React.useState<"query"|"page">("query");
-  const [country, setCountry] = React.useState(""); // Accepts "US", "USA", "United States", "COUNTRY_US"
+  const [countryCode, setCountryCode] = React.useState<string>(""); // dropdown -> COUNTRY_XX
   const [device, setDevice] = React.useState("");
   const [rowLimit, setRowLimit] = React.useState(25);
   const [query, setQuery] = React.useState("");
@@ -38,10 +39,11 @@ export default function TrackerPage() {
         method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({
           siteUrl, startDate, endDate, rowLimit,
-          country, device, query, queryMatch, dimension, sortBy, sortDir
+          country: countryCode, device, query, queryMatch, dimension, sortBy, sortDir
         }),
       });
-      const j = await res.json();
+      const isJSON = res.headers.get("content-type")?.includes("application/json");
+      const j = isJSON ? await res.json() : { error: await res.text() };
       if (!res.ok) throw new Error(j?.error || "Failed to run tracker");
       setRows(j.rows ?? []);
     } catch (e:any) {
@@ -54,8 +56,7 @@ export default function TrackerPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = `tracker_${dimension}_${startDate}_${endDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    a.click(); URL.revokeObjectURL(url);
   }
 
   if (status === "loading") return <div className="p-6">Loading…</div>;
@@ -66,12 +67,12 @@ export default function TrackerPage() {
           <h1 className="text-xl font-semibold">Organic Tracker</h1>
           <button className="px-3 py-2 border rounded" onClick={() => signIn("google")}>Sign in with Google</button>
         </div>
-        <p>Sign in to select a GSC property and run the tracker.</p>
       </main>
     );
   }
 
-  const barData = rows.map(r => ({ label: r.key, value: r[sortBy] as number }));
+  const labels = rows.map(r => r.key);
+  const barValues = rows.map(r => (sortBy === "ctr" ? r.ctr * 100 : (sortBy === "position" ? r.position : (sortBy === "impressions" ? r.impressions : r.clicks))));
 
   return (
     <main className="p-6">
@@ -92,8 +93,7 @@ export default function TrackerPage() {
         <div>
           <label className="block text-sm mb-1">Dimension</label>
           <select className="w-full border rounded px-3 py-2" value={dimension} onChange={(e)=>setDimension(e.target.value as any)}>
-            <option value="query">Query</option>
-            <option value="page">Page</option>
+            <option value="query">Query</option><option value="page">Page</option>
           </select>
         </div>
         <div>
@@ -110,16 +110,13 @@ export default function TrackerPage() {
           <input className="w-full border rounded px-3 py-2" type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)}/>
         </div>
         <div>
-          <label className="block text-sm mb-1">Country (optional)</label>
-          <input className="w-full border rounded px-3 py-2" placeholder="US / USA / United States / COUNTRY_US" value={country} onChange={(e)=>setCountry(e.target.value)}/>
+          <label className="block text-sm mb-1">Country</label>
+          <CountrySelect value={countryCode} onChange={setCountryCode} />
         </div>
         <div>
-          <label className="block text-sm mb-1">Device (optional)</label>
+          <label className="block text-sm mb-1">Device</label>
           <select className="w-full border rounded px-3 py-2" value={device} onChange={(e)=>setDevice(e.target.value)}>
-            <option value="">All</option>
-            <option value="DESKTOP">Desktop</option>
-            <option value="MOBILE">Mobile</option>
-            <option value="TABLET">Tablet</option>
+            <option value="">All</option><option value="DESKTOP">Desktop</option><option value="MOBILE">Mobile</option><option value="TABLET">Tablet</option>
           </select>
         </div>
 
@@ -127,8 +124,7 @@ export default function TrackerPage() {
           <label className="block text-sm mb-1">Keyword contains / equals</label>
           <div className="flex gap-2">
             <select className="border rounded px-3 py-2" value={queryMatch} onChange={(e)=>setQueryMatch(e.target.value as any)}>
-              <option value="contains">contains</option>
-              <option value="equals">equals</option>
+              <option value="contains">contains</option><option value="equals">equals</option>
             </select>
             <input className="flex-1 border rounded px-3 py-2" placeholder="nfpa 13 2025…" value={query} onChange={(e)=>setQuery(e.target.value)}/>
           </div>
@@ -138,14 +134,10 @@ export default function TrackerPage() {
           <label className="block text-sm mb-1">Sort</label>
           <div className="flex gap-2">
             <select className="border rounded px-3 py-2" value={sortBy} onChange={(e)=>setSortBy(e.target.value as any)}>
-              <option value="clicks">Clicks</option>
-              <option value="impressions">Impressions</option>
-              <option value="ctr">CTR</option>
-              <option value="position">Position</option>
+              <option value="clicks">Clicks</option><option value="impressions">Impressions</option><option value="ctr">CTR</option><option value="position">Position</option>
             </select>
             <select className="border rounded px-3 py-2" value={sortDir} onChange={(e)=>setSortDir(e.target.value as any)}>
-              <option value="desc">desc</option>
-              <option value="asc">asc</option>
+              <option value="desc">desc</option><option value="asc">asc</option>
             </select>
           </div>
         </div>
@@ -154,13 +146,11 @@ export default function TrackerPage() {
           <button onClick={onRun} disabled={loading || !siteUrl} className="bg-purple-600 text-white px-4 py-2 rounded disabled:opacity-50">
             {loading ? "Running…" : "Run"}
           </button>
-          <button onClick={downloadCSV} disabled={!rows.length} className="px-4 py-2 border rounded disabled:opacity-50">
-            Download CSV
-          </button>
+          <button onClick={downloadCSV} disabled={!rows.length} className="px-4 py-2 border rounded disabled:opacity-50">Download CSV</button>
         </div>
       </div>
 
-      {/* Results & Chart */}
+      {/* Results + modern bar */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 overflow-x-auto border rounded">
           <table className="min-w-[820px] w-full text-sm">
@@ -174,10 +164,8 @@ export default function TrackerPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 ? (
-                <tr><td className="px-3 py-8 text-gray-500" colSpan={5}>Run the tracker to see results.</td></tr>
-              ) : (
-                rows.map((r, i) => (
+              {!rows.length ? <tr><td className="px-3 py-8 text-gray-500" colSpan={5}>Run the tracker to see results.</td></tr> :
+                rows.map((r,i)=>(
                   <tr key={i} className="border-b">
                     <td className="px-3 py-2">{r.key}</td>
                     <td className="px-3 py-2 text-right">{r.clicks}</td>
@@ -186,20 +174,19 @@ export default function TrackerPage() {
                     <td className="px-3 py-2 text-right">{Number(r.position).toFixed(1)}</td>
                   </tr>
                 ))
-              )}
+              }
             </tbody>
           </table>
         </div>
 
         <div className="border rounded p-2">
-          <div className="font-medium mb-2">Top 10 by {sortBy[0].toUpperCase() + sortBy.slice(1)}</div>
-          <HBarChart bars={barData} />
-          <div className="text-xs text-gray-500 mt-2">Bars show top 10 rows scaled by {sortBy}.</div>
+          <div className="font-medium mb-2">Top by {sortBy}</div>
+          <BarChartModern labels={labels.slice(0,10)} values={barValues.slice(0,10)} />
+          <div className="text-xs text-gray-500 mt-2">Bars show top 10 rows by current sort.</div>
         </div>
       </div>
 
       {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
-
       <footer className="text-xs text-gray-500 mt-6">© {new Date().getFullYear()} VSight — Unified Analytics</footer>
     </main>
   );
