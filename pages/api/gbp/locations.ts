@@ -1,28 +1,30 @@
+// pages/api/gbp/locations.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
-import { gbpListLocations } from "@/lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
   try {
-    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.access_token) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
+    const token = await getToken({ req });
+    if (!token?.access_token) return res.status(401).json({ error: "Unauthenticated" });
 
-    const { accountId } = req.query as { accountId?: string };
+    // 1) Get Accounts
+    const acc = await fetch("https://mybusinessaccountmanagement.googleapis.com/v1/accounts", {
+      headers: { Authorization: `Bearer ${token.access_token}` },
+    });
+    if (!acc.ok) return res.status(acc.status).json({ error: "Account list failed", detail: await acc.text() });
+    const accounts = await acc.json();
+    const accountName: string | undefined = accounts.accounts?.[0]?.name; // e.g., "accounts/123456789"
+    if (!accountName) return res.json({ locations: [] });
 
-    const locations = await gbpListLocations(String(token.access_token), accountId);
+    // 2) List Locations (basic profile)
+    const url = `https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations?pageSize=50`;
+    const loc = await fetch(url, { headers: { Authorization: `Bearer ${token.access_token}` } });
+    if (!loc.ok) return res.status(loc.status).json({ error: "Locations failed", detail: await loc.text() });
+    const data = await loc.json();
 
-    // Normalize for UI
-    const rows = locations.map((l) => ({
-      name: l.name,
-      title: l.title || "",
-      storeCode: l.storeCode || "",
-      primaryCategory: l.primaryCategory || "",
-    }));
-
-    return res.status(200).json({ rows });
+    res.json({ locations: data.locations ?? [] });
   } catch (e: any) {
-    return res.status(500).json({ error: e?.message || "Unexpected error" });
+    res.status(500).json({ error: e?.message ?? "Unknown error" });
   }
 }
