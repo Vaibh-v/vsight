@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import GSCSitePicker from "@/components/GSCSitePicker";
+import { HBarChart } from "@/components/CanvasChart";
 
 type Row = { key: string; clicks: number; impressions: number; ctr: number; position: number };
 
@@ -10,28 +11,6 @@ function toCSV(rows: Row[]) {
   return [hdr, ...lines].join("\n");
 }
 
-function Bars({ rows }: { rows: Row[] }) {
-  if (!rows.length) return null;
-  const top = rows.slice(0, 10);
-  const max = Math.max(...top.map(r => r.clicks || 0), 1);
-  const h = 18, pad = 4, w = 420;
-  return (
-    <svg width={w} height={top.length * h + pad}>
-      {top.map((r, i) => {
-        const barW = (r.clicks / max) * (w - 140);
-        const y = i * h + pad;
-        return (
-          <g key={i}>
-            <text x={4} y={y + 12} fontSize="10">{r.key.slice(0, 18)}</text>
-            <rect x={120} y={y + 2} width={barW} height={12} fill="currentColor" opacity={0.15} />
-            <text x={120 + barW + 6} y={y + 12} fontSize="10">{r.clicks}</text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
 export default function TrackerPage() {
   const { data: session, status } = useSession();
 
@@ -39,7 +18,7 @@ export default function TrackerPage() {
   const [startDate, setStartDate] = React.useState(() => new Date(Date.now() - 27*86400000).toISOString().slice(0,10));
   const [endDate, setEndDate] = React.useState(() => new Date().toISOString().slice(0,10));
   const [dimension, setDimension] = React.useState<"query"|"page">("query");
-  const [country, setCountry] = React.useState("");
+  const [country, setCountry] = React.useState(""); // Accepts "US", "USA", "United States", "COUNTRY_US"
   const [device, setDevice] = React.useState("");
   const [rowLimit, setRowLimit] = React.useState(25);
   const [query, setQuery] = React.useState("");
@@ -58,14 +37,13 @@ export default function TrackerPage() {
       const res = await fetch("/api/tracker/run", {
         method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({
-          siteUrl, startDate, endDate, rowLimit, country, device, query, queryMatch, dimension, sortBy, sortDir
+          siteUrl, startDate, endDate, rowLimit,
+          country, device, query, queryMatch, dimension, sortBy, sortDir
         }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j?.error || "Failed to run tracker");
       setRows(j.rows ?? []);
-      // Store last tracker run (for AI Insights)
-      localStorage.setItem("vsight:lastTracker", JSON.stringify({ params: { siteUrl, startDate, endDate, dimension, country, device, query, queryMatch }, rows: j.rows ?? [] }));
     } catch (e:any) {
       setErr(e?.message || "Failed to run tracker");
     } finally { setLoading(false); }
@@ -76,7 +54,8 @@ export default function TrackerPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = `tracker_${dimension}_${startDate}_${endDate}.csv`;
-    a.click(); URL.revokeObjectURL(url);
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   if (status === "loading") return <div className="p-6">Loading…</div>;
@@ -92,6 +71,8 @@ export default function TrackerPage() {
     );
   }
 
+  const barData = rows.map(r => ({ label: r.key, value: r[sortBy] as number }));
+
   return (
     <main className="p-6">
       <div className="flex justify-between items-center mb-6">
@@ -103,11 +84,11 @@ export default function TrackerPage() {
       </div>
 
       {/* Controls */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-3">
-        <div className="col-span-2">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-3 mb-3">
+        <div className="lg:col-span-2">
+          <label className="block text-sm mb-1">GSC Property</label>
           <GSCSitePicker value={siteUrl} onChange={setSiteUrl} placeholder="Select a GSC property…" />
         </div>
-
         <div>
           <label className="block text-sm mb-1">Dimension</label>
           <select className="w-full border rounded px-3 py-2" value={dimension} onChange={(e)=>setDimension(e.target.value as any)}>
@@ -115,7 +96,6 @@ export default function TrackerPage() {
             <option value="page">Page</option>
           </select>
         </div>
-
         <div>
           <label className="block text-sm mb-1">Row limit</label>
           <input className="w-full border rounded px-3 py-2" type="number" min={1} max={1000} value={rowLimit} onChange={(e)=>setRowLimit(Number(e.target.value))}/>
@@ -129,10 +109,9 @@ export default function TrackerPage() {
           <label className="block text-sm mb-1">End</label>
           <input className="w-full border rounded px-3 py-2" type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)}/>
         </div>
-
         <div>
           <label className="block text-sm mb-1">Country (optional)</label>
-          <input className="w-full border rounded px-3 py-2" placeholder="US / USA" value={country} onChange={(e)=>setCountry(e.target.value)}/>
+          <input className="w-full border rounded px-3 py-2" placeholder="US / USA / United States / COUNTRY_US" value={country} onChange={(e)=>setCountry(e.target.value)}/>
         </div>
         <div>
           <label className="block text-sm mb-1">Device (optional)</label>
@@ -144,7 +123,7 @@ export default function TrackerPage() {
           </select>
         </div>
 
-        <div className="col-span-2">
+        <div className="lg:col-span-2">
           <label className="block text-sm mb-1">Keyword contains / equals</label>
           <div className="flex gap-2">
             <select className="border rounded px-3 py-2" value={queryMatch} onChange={(e)=>setQueryMatch(e.target.value as any)}>
@@ -181,11 +160,9 @@ export default function TrackerPage() {
         </div>
       </div>
 
-      {err && <div className="mb-3 text-sm text-red-600">{err}</div>}
-
-      {/* Results */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="overflow-x-auto border rounded">
+      {/* Results & Chart */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 overflow-x-auto border rounded">
           <table className="min-w-[820px] w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
@@ -214,12 +191,14 @@ export default function TrackerPage() {
           </table>
         </div>
 
-        <div className="border rounded p-3">
-          <div className="font-medium mb-2">Top 10 by Clicks</div>
-          <Bars rows={[...rows].sort((a,b)=>b.clicks-a.clicks)} />
-          <div className="text-xs text-gray-500 mt-2">Bars show top 10 rows scaled by clicks.</div>
+        <div className="border rounded p-2">
+          <div className="font-medium mb-2">Top 10 by {sortBy[0].toUpperCase() + sortBy.slice(1)}</div>
+          <HBarChart bars={barData} />
+          <div className="text-xs text-gray-500 mt-2">Bars show top 10 rows scaled by {sortBy}.</div>
         </div>
       </div>
+
+      {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
 
       <footer className="text-xs text-gray-500 mt-6">© {new Date().getFullYear()} VSight — Unified Analytics</footer>
     </main>
