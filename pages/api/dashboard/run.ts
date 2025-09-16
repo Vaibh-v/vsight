@@ -17,9 +17,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     if (gaProperty) {
-      // GA4: metrics by day
-      const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(gaProperty)}:runReport`;
-      const r = await fetch(url, {
+      const base = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(gaProperty)}:runReport`;
+
+      // Time series (more metrics)
+      const tsRes = await fetch(base, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -30,23 +31,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             { name: "activeUsers" },
             { name: "engagedSessions" },
             { name: "eventCount" },
+            { name: "averageSessionDuration" },
+            { name: "engagementRate" },
           ],
           orderBys: [{ dimension: { dimensionName: "date" } }],
         }),
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error?.message || "GA4 report failed");
-
-      const series = (j.rows ?? []).map((row: any) => ({
+      const ts = await tsRes.json();
+      if (!tsRes.ok) throw new Error(ts?.error?.message || "GA4 report failed");
+      const series = (ts.rows ?? []).map((row: any) => ({
         date: row.dimensionValues?.[0]?.value ?? "",
         sessions: Number(row.metricValues?.[0]?.value ?? 0),
         users: Number(row.metricValues?.[1]?.value ?? 0),
         engaged: Number(row.metricValues?.[2]?.value ?? 0),
         events: Number(row.metricValues?.[3]?.value ?? 0),
+        avgSession: Number(row.metricValues?.[4]?.value ?? 0),
+        engagementRate: Number(row.metricValues?.[5]?.value ?? 0),
       }));
 
       // Top pages
-      const r2 = await fetch(url, {
+      const pagesRes = await fetch(base, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -57,41 +61,53 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
         }),
       });
-      const j2 = await r2.json();
-      const topPages = (j2.rows ?? []).map((row: any) => ({
+      const pages = await pagesRes.json();
+      const topPages = (pages.rows ?? []).map((row: any) => ({
         path: row.dimensionValues?.[0]?.value ?? "",
         sessions: Number(row.metricValues?.[0]?.value ?? 0),
       }));
 
-      out.ga = { series, topPages };
-    }
-
-    if (gscSite) {
-      // GSC: clicks by date
-      const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(gscSite)}/searchAnalytics/query`;
-      const dayRes = await fetch(url, {
+      // Source/Medium top 10
+      const smRes = await fetch(base, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          startDate: start, endDate: end,
-          dimensions: ["date"],
-          rowLimit: 1000,
+          dateRanges: [{ startDate: start, endDate: end }],
+          dimensions: [{ name: "sessionSourceMedium" }],
+          metrics: [{ name: "sessions" }],
+          limit: 10,
+          orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
         }),
+      });
+      const sm = await smRes.json();
+      const topSourceMedium = (sm.rows ?? []).map((row: any) => ({
+        label: row.dimensionValues?.[0]?.value ?? "",
+        sessions: Number(row.metricValues?.[0]?.value ?? 0),
+      }));
+
+      out.ga = { series, topPages, topSourceMedium };
+    }
+
+    if (gscSite) {
+      const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(gscSite)}/searchAnalytics/query`;
+
+      const dayRes = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ startDate: start, endDate: end, dimensions: ["date"], rowLimit: 1000 }),
       });
       const jd = await dayRes.json();
       if (!dayRes.ok) throw new Error(jd?.error?.message || "GSC report failed");
       const series = (jd.rows ?? []).map((row: any) => ({
-        date: row.keys?.[0] ?? "", clicks: Number(row.clicks ?? 0), impressions: Number(row.impressions ?? 0),
+        date: row.keys?.[0] ?? "",
+        clicks: Number(row.clicks ?? 0),
+        impressions: Number(row.impressions ?? 0),
       }));
 
-      // Top queries
       const tqRes = await fetch(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          startDate: start, endDate: end,
-          dimensions: ["query"], rowLimit: 10,
-        }),
+        body: JSON.stringify({ startDate: start, endDate: end, dimensions: ["query"], rowLimit: 10 }),
       });
       const tq = await tqRes.json();
       const topQueries = (tq.rows ?? []).map((row: any) => ({
