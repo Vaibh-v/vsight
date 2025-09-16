@@ -65,6 +65,9 @@ export function LineChartMini({
   );
 }
 
+/** Backward-compat alias so pages can import { LineChartModern } */
+export const LineChartModern = LineChartMini;
+
 export function BarChartModern({
   labels,
   data,
