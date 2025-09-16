@@ -1,5 +1,36 @@
-import { useEffect,useState } from "react";type Property={property:string;displayName:string};
-export default function GAPropertyPicker({value,onChange}:{value?:string;onChange:(v:string)=>void}){const[loading,setLoading]=useState(false);const[properties,setProperties]=useState<Property[]>([]);const[error,setError]=useState<string|null>(null);
-useEffect(()=>{(async()=>{setLoading(true);setError(null);try{const r=await fetch("/api/google/ga/properties");const j=await r.json();if(!r.ok) throw new Error(j.error||"Failed to load GA properties");setProperties(j.properties||[]);}catch(e:any){setError(e.message);}finally{setLoading(false);}})();},[]);
-if(loading) return <p>Loading GA properties…</p>; if(error) return <p className="text-red-600 text-sm">{error}</p>; if(!properties.length) return <p className="text-sm text-gray-500">No GA4 properties found.</p>;
-return(<select className="w-full border rounded p-2" value={value} onChange={e=>onChange(e.target.value)}>{properties.map(p=><option key={p.property} value={p.property}>{p.displayName} ({p.property.replace("properties/","")})</option>)}</select>);}
+import { useEffect, useState } from "react";
+
+type Props = { value: string; onChange: (v: string) => void };
+
+export default function GAPropertyPicker({ value, onChange }: Props) {
+  const [loading, setLoading] = useState(false);
+  const [items, setItems] = useState<Array<{ propertyId: string; displayName: string }>>([]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/ga4/properties");
+        const json = await res.json();
+        if (mounted) setItems(json.properties ?? []);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} className="border rounded px-2 py-1 w-full">
+      <option value="">{loading ? "Loading…" : "Select a GA4 property…"}</option>
+      {items.map(p => (
+        <option key={p.propertyId} value={p.propertyId}>
+          {p.displayName} (ID: {p.propertyId})
+        </option>
+      ))}
+    </select>
+  );
+}
