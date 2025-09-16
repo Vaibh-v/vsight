@@ -1,34 +1,39 @@
 // components/CountrySelect.tsx
 import React from "react";
 
-type Props = {
-  value: string; // ISO like "US" or "" for All
-  onChange: (v: string | undefined) => void;
-  className?: string;
-};
+type Opt = { label: string; value: string };
 
-const COUNTRIES: Array<{ code: string; label: string }> = [
-  { code: "", label: "All countries" },
-  { code: "US", label: "United States" },
-  { code: "IN", label: "India" },
-  { code: "GB", label: "United Kingdom" },
-  { code: "CA", label: "Canada" },
-  { code: "AU", label: "Australia" },
-  { code: "DE", label: "Germany" },
-  { code: "FR", label: "France" },
-  { code: "SG", label: "Singapore" },
-  { code: "AE", label: "United Arab Emirates" },
+const COUNTRIES: Opt[] = [
+  { label: "All countries", value: "" },
+  { label: "United States", value: "COUNTRY_US" },
+  { label: "India", value: "COUNTRY_IN" },
+  { label: "United Kingdom", value: "COUNTRY_GB" },
+  { label: "Canada", value: "COUNTRY_CA" },
+  { label: "Australia", value: "COUNTRY_AU" },
+  { label: "Germany", value: "COUNTRY_DE" },
+  { label: "France", value: "COUNTRY_FR" },
+  { label: "Singapore", value: "COUNTRY_SG" },
+  // add more as needed
 ];
 
-export default function CountrySelect({ value, onChange, className }: Props) {
+export default function CountrySelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value?: string;
+  onChange: (v: string | undefined) => void;
+  disabled?: boolean;
+}) {
   return (
     <select
-      className={className ?? "w-full border rounded px-2 py-2"}
-      value={value}
+      className="border rounded px-2 py-1 w-full"
+      value={value ?? ""}
       onChange={(e) => onChange(e.target.value || undefined)}
+      disabled={disabled}
     >
       {COUNTRIES.map((c) => (
-        <option key={c.code || "ALL"} value={c.code}>
+        <option key={c.value || "ALL"} value={c.value}>
           {c.label}
         </option>
       ))}
