@@ -1,187 +1,156 @@
 // pages/tracker.tsx
-import { useSession, signIn } from "next-auth/react";
 import { useState } from "react";
-import { safeFetchJSON, toISO } from "@/lib/safeFetch";
-import CountrySelect from "@/components/CountrySelect";
-import { BarChartMini } from "@/components/ChartKit";
+import { useSession, signIn } from "next-auth/react";
 import GSCSitePicker from "@/components/GSCSitePicker";
+import { fetchJSON, toYmd, assertDateString, safeNum } from "@/lib/fetcher";
+import MiniLine from "@/components/MiniLine";
 
-type Row = { keys: string[]; clicks: number; impressions: number; ctr: number; position: number };
+type Row = { key: string; clicks: number; impressions: number; ctr: number; position: number };
+
+const COUNTRIES = [
+  "All countries","United States","India","United Kingdom","Canada","Australia","Germany","France","Singapore"
+];
 
 export default function Tracker() {
-  const { status } = useSession();
-  const [siteUrl, setSiteUrl] = useState<string | undefined>();
+  const { data: session } = useSession();
+  const [site, setSite] = useState("");
   const [dimension, setDimension] = useState<"query" | "page">("page");
-  const [country, setCountry] = useState<string | undefined>("");
-  const [device, setDevice] = useState<"All" | "Desktop" | "Mobile" | "Tablet">("All");
-  const [start, setStart] = useState<string>(toISO(new Date(Date.now() - 30 * 864e5))!);
-  const [end, setEnd] = useState<string>(toISO(new Date())!);
+  const [rowLimit, setRowLimit] = useState(25);
+  const [device, setDevice] = useState<"all" | "desktop" | "mobile" | "tablet">("all");
+  const [country, setCountry] = useState("All countries");
   const [keywordMode, setKeywordMode] = useState<"contains" | "equals">("contains");
-  const [keywordValue, setKeywordValue] = useState<string>("");
-  const [sortBy, setSortBy] = useState<"clicks" | "impressions" | "ctr" | "position">("clicks");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [keyword, setKeyword] = useState("");
+  const [start, setStart] = useState(() => { const d = new Date(); d.setMonth(d.getMonth()-1); return toYmd(d); });
+  const [end, setEnd] = useState(() => toYmd(new Date()));
+  const [error, setError] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
-  const [err, setErr] = useState<string>("");
+  const [top10, setTop10] = useState<number[]>([]);
 
-  const run = async () => {
-    setErr("");
-    setRows([]);
+  if (!session) {
+    return <div className="max-w-5xl mx-auto p-6">
+      <div className="text-xl mb-4">Organic Tracker</div>
+      <button className="px-3 py-2 bg-black text-white rounded" onClick={() => signIn()}>Sign in</button>
+    </div>;
+  }
+
+  async function run() {
     try {
-      if (!siteUrl) throw new Error("Select a GSC property first.");
-      const payload = {
-        siteUrl,
-        startDate: start,
-        endDate: end,
-        dimension,
-        rowLimit: 25,
-        countryCode: country || undefined,
-        device: device === "All" ? undefined : device,
-        keywordMode,
-        keywordValue: keywordValue.trim() || undefined,
-        sortBy, sortDir,
-      };
-      const data = await safeFetchJSON<{ rows: Row[] }>("/api/gsc/query", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      setRows(data.rows);
-    } catch (e: any) {
-      setErr(e.message || String(e));
-    }
-  };
+      setError("");
+      assertDateString(start, "Start");
+      assertDateString(end, "End");
+      if (!site) throw new Error("Select a GSC property");
 
-  if (status === "unauthenticated") {
-    return (
-      <div className="p-6">
-        <p className="mb-3">Sign in to use the Organic Tracker.</p>
-        <button className="px-3 py-2 rounded bg-black text-white" onClick={() => signIn()}>Sign in</button>
-      </div>
-    );
+      const qs = new URLSearchParams({
+        site, dimension,
+        start, end,
+        limit: String(rowLimit),
+        device,
+        country: country === "All countries" ? "" : country,
+        keywordMode, keyword
+      });
+
+      const data = await fetchJSON<{ rows: Row[] }>(`/api/gsc/organic-tracker?${qs.toString()}`);
+      const r = data.rows || [];
+      setRows(r);
+
+      const top = r.slice(0, 10).map(x => safeNum(x.clicks, 0));
+      setTop10(top);
+    } catch (e:any) {
+      setRows([]); setTop10([]);
+      setError(e.message || String(e));
+    }
   }
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <div className="col-span-2">
+    <div className="max-w-[1200px] mx-auto p-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+        <div>
           <label className="block text-sm mb-1">GSC Property</label>
-          <GSCSitePicker value={siteUrl} onChange={setSiteUrl} />
+          <GSCSitePicker value={site} onChange={setSite} />
         </div>
-
         <div>
           <label className="block text-sm mb-1">Dimension</label>
-          <select className="border rounded px-2 py-1 w-full"
-            value={dimension} onChange={e => setDimension(e.target.value as any)}>
-            <option value="query">Query</option>
+          <select value={dimension} onChange={e => setDimension(e.target.value as any)} className="border rounded px-3 py-2">
             <option value="page">Page</option>
+            <option value="query">Query</option>
           </select>
         </div>
 
         <div>
-          <label className="block text-sm mb-1">Row limit</label>
-          <input type="number" className="border rounded px-2 py-1 w-full" defaultValue={25} readOnly />
-        </div>
-
-        <div>
           <label className="block text-sm mb-1">Country (optional)</label>
-          <CountrySelect value={country} onChange={setCountry} />
+          <select value={country} onChange={e => setCountry(e.target.value)} className="border rounded px-3 py-2">
+            {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
         </div>
-
         <div>
           <label className="block text-sm mb-1">Device (optional)</label>
-          <select className="border rounded px-2 py-1 w-full"
-            value={device} onChange={e => setDevice(e.target.value as any)}>
-            <option>All</option><option>Desktop</option><option>Mobile</option><option>Tablet</option>
+          <select value={device} onChange={e => setDevice(e.target.value as any)} className="border rounded px-3 py-2">
+            <option value="all">All</option>
+            <option value="desktop">Desktop</option>
+            <option value="mobile">Mobile</option>
+            <option value="tablet">Tablet</option>
           </select>
         </div>
 
         <div>
           <label className="block text-sm mb-1">Start</label>
-          <input type="date" className="border rounded px-2 py-1 w-full"
-            value={start} onChange={e => setStart(toISO(e.target.value) || start)} />
+          <input type="date" value={start} onChange={e => setStart(e.target.value)} className="border rounded px-3 py-2" />
         </div>
-
         <div>
           <label className="block text-sm mb-1">End</label>
-          <input type="date" className="border rounded px-2 py-1 w-full"
-            value={end} onChange={e => setEnd(toISO(e.target.value) || end)} />
+          <input type="date" value={end} onChange={e => setEnd(e.target.value)} className="border rounded px-3 py-2" />
         </div>
 
         <div>
           <label className="block text-sm mb-1">Keyword mode</label>
-          <select className="border rounded px-2 py-1 w-full"
-            value={keywordMode} onChange={e => setKeywordMode(e.target.value as any)}>
+          <select value={keywordMode} onChange={e => setKeywordMode(e.target.value as any)} className="border rounded px-3 py-2">
             <option value="contains">contains</option>
             <option value="equals">equals</option>
           </select>
         </div>
-
         <div>
           <label className="block text-sm mb-1">Keyword</label>
-          <input className="border rounded px-2 py-1 w-full"
-            placeholder="e.g., nfpa 10" value={keywordValue} onChange={e => setKeywordValue(e.target.value)} />
-        </div>
-
-        <div>
-          <label className="block text-sm mb-1">Sort</label>
-          <div className="flex gap-2">
-            <select className="border rounded px-2 py-1 w-full"
-              value={sortBy} onChange={e => setSortBy(e.target.value as any)}>
-              <option value="clicks">Clicks</option>
-              <option value="impressions">Impr.</option>
-              <option value="ctr">CTR</option>
-              <option value="position">Avg Pos</option>
-            </select>
-            <select className="border rounded px-2 py-1"
-              value={sortDir} onChange={e => setSortDir(e.target.value as any)}>
-              <option value="desc">desc</option>
-              <option value="asc">asc</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="flex items-end">
-          <button className="px-3 py-2 rounded bg-purple-600 text-white" onClick={run}>Run</button>
+          <input value={keyword} onChange={e => setKeyword(e.target.value)} placeholder="e.g., nfpa 10" className="border rounded px-3 py-2 w-full" />
         </div>
       </div>
 
-      {err && <div className="text-red-600 text-sm">{err}</div>}
+      <div className="mt-4 flex gap-3 items-center">
+        <button onClick={run} className="px-3 py-2 rounded bg-violet-600 text-white">Run</button>
+        {error && <div className="text-red-600 text-sm">{error}</div>}
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <div className="col-span-3 border rounded p-3 overflow-auto">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+        <div className="border rounded">
+          <div className="px-3 py-2 font-medium border-b">Results</div>
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left border-b">
-                <th className="py-2">{dimension === "page" ? "Page" : "Query"}</th>
-                <th className="py-2">Clicks</th>
-                <th className="py-2">Impr.</th>
-                <th className="py-2">CTR</th>
-                <th className="py-2">Avg Pos</th>
+              <tr className="text-left">
+                <th className="px-3 py-2">{dimension === "page" ? "Page" : "Query"}</th>
+                <th className="px-3 py-2 text-right">Clicks</th>
+                <th className="px-3 py-2 text-right">Impr.</th>
+                <th className="px-3 py-2 text-right">CTR</th>
+                <th className="px-3 py-2 text-right">Avg Pos</th>
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && (
-                <tr><td colSpan={5} className="py-4 text-gray-500">Run the tracker to see results.</td></tr>
-              )}
               {rows.map((r, i) => (
                 <tr key={i} className="border-b last:border-0">
-                  <td className="py-2 break-all">{r.keys?.[0] ?? "-"}</td>
-                  <td className="py-2">{r.clicks ?? 0}</td>
-                  <td className="py-2">{r.impressions ?? 0}</td>
-                  <td className="py-2">{((r.ctr ?? 0) * 100).toFixed(2)}%</td>
-                  <td className="py-2">{(r.position ?? 0).toFixed(1)}</td>
+                  <td className="px-3 py-2 truncate">{r.key}</td>
+                  <td className="px-3 py-2 text-right">{safeNum(r.clicks, 0)}</td>
+                  <td className="px-3 py-2 text-right">{safeNum(r.impressions, 0)}</td>
+                  <td className="px-3 py-2 text-right">{safeNum(r.ctr * 100, 1)}%</td>
+                  <td className="px-3 py-2 text-right">{safeNum(r.position, 1)}</td>
                 </tr>
               ))}
+              {!rows.length && <tr><td className="px-3 py-3 text-gray-400">Run the tracker to see results.</td></tr>}
             </tbody>
           </table>
         </div>
 
-        <div className="col-span-2 border rounded p-3">
-          <div className="font-medium mb-2">Top 10 by Clicks</div>
-          <BarChartMini
-            labels={rows.slice(0, 10).map(r => r.keys?.[0] ?? "")}
-            data={rows.slice(0, 10).map(r => r.clicks ?? 0)}
-            height={300}
-          />
+        <div className="border rounded">
+          <div className="px-3 py-2 font-medium border-b">Top 10 by Clicks</div>
+          <MiniLine data={top10} />
+          <div className="px-3 py-2 text-xs text-gray-500">Bars show top 10 rows scaled by clicks.</div>
         </div>
       </div>
     </div>
