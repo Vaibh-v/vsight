@@ -1,144 +1,77 @@
 // components/ChartKit.tsx
-import React from "react";
-import {
-  Chart as ChartJS,
-  LineController,
-  LineElement,
-  PointElement,
-  LinearScale,
-  CategoryScale,
-  BarController,
-  BarElement,
-  Tooltip,
-  Legend,
-  Filler,
-  ChartOptions,
-  ChartData,
-} from "chart.js";
-import { Line, Bar } from "react-chartjs-2";
+"use client";
 
-ChartJS.register(
-  LineController,
-  LineElement,
-  PointElement,
-  LinearScale,
-  CategoryScale,
-  BarController,
-  BarElement,
-  Tooltip,
-  Legend,
-  Filler
+import {
+  Chart, LineController, LineElement, PointElement, LinearScale,
+  CategoryScale, BarController, BarElement, Tooltip, Legend, Filler,
+} from "chart.js";
+import { Chart as ReactChart } from "react-chartjs-2";
+import { memo } from "react";
+
+Chart.register(
+  LineController, LineElement, PointElement, LinearScale, CategoryScale,
+  BarController, BarElement, Tooltip, Legend, Filler
 );
 
-/** -------- Utilities -------- */
-const guardTick = (v: unknown) => {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "";
-  if (Math.abs(n) >= 1000) return `${Math.round(n / 1000)}k`;
-  return `${Math.round(n)}`;
-};
-
-const baseLineOptions = (title?: string): ChartOptions<"line"> => ({
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { display: false },
-    title: title ? { display: true, text: title } : undefined,
-    tooltip: { intersect: false, mode: "index" },
-  },
-  scales: {
-    x: { grid: { display: false } },
-    y: {
-      grid: { color: "rgba(0,0,0,0.06)" },
-      ticks: { callback: guardTick },
-    },
-  },
-  elements: {
-    line: { tension: 0.35, borderWidth: 2, fill: false },
-    point: { radius: 0 },
-  },
-});
-
-const baseBarOptions = (title?: string): ChartOptions<"bar"> => ({
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { display: false },
-    title: title ? { display: true, text: title } : undefined,
-    tooltip: { intersect: true, mode: "nearest" },
-  },
-  scales: {
-    x: { grid: { display: false } },
-    y: {
-      grid: { color: "rgba(0,0,0,0.06)" },
-      ticks: { callback: guardTick },
-    },
-  },
-});
-
-/** -------- Public components -------- */
-
-export type LineProps = {
+type LineProps = {
   labels: string[];
   data: number[];
   height?: number;
   title?: string;
 };
 
-export const LineChartModern: React.FC<LineProps> = ({
-  labels,
-  data,
-  height = 220,
-  title,
-}) => {
-  const chartData: ChartData<"line"> = {
-    labels: labels ?? [],
-    datasets: [
-      {
-        label: title ?? "",
-        data: data ?? [],
-        borderColor: "rgb(99,102,241)", // indigo-ish (Chart.js default palette)
-        backgroundColor: "rgba(99,102,241,0.25)",
-        fill: true,
-      },
-    ],
-  };
-  return (
-    <div style={{ height }}>
-      <Line options={baseLineOptions(title)} data={chartData} />
-    </div>
-  );
-};
-
-export type BarProps = {
+type BarProps = {
   labels: string[];
   data: number[];
   height?: number;
   title?: string;
 };
 
-export const BarChartModern: React.FC<BarProps> = ({
-  labels,
-  data,
-  height = 220,
-  title,
-}) => {
-  const chartData: ChartData<"bar"> = {
-    labels: labels ?? [],
-    datasets: [
-      {
-        label: title ?? "",
-        data: data ?? [],
-        borderWidth: 1,
-      },
-    ],
+const commonOpts = (title?: string) => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: { display: false },
+    title: title ? { display: true, text: title } : { display: false },
+    tooltip: { intersect: false, mode: "index" as const },
+  },
+  interaction: { intersect: false, mode: "index" as const },
+  scales: {
+    x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } },
+    y: { grid: { color: "#eee" } },
+  },
+});
+
+export const LineChartMini = memo(function LineChartMini(props: LineProps) {
+  const { labels, data, height = 220, title } = props;
+  const ds = {
+    labels,
+    datasets: [{
+      label: title || "Series",
+      data,
+      fill: true,
+      tension: 0.35,
+    }],
   };
   return (
     <div style={{ height }}>
-      <Bar options={baseBarOptions(title)} data={chartData} />
+      <ReactChart type="line" data={ds} options={commonOpts(title)} />
     </div>
   );
-};
+});
 
-/** Tiny sparkline option kept for existing imports */
-export const LineChartMini = LineChartModern;
+export const BarChartMini = memo(function BarChartMini(props: BarProps) {
+  const { labels, data, height = 220, title } = props;
+  const ds = {
+    labels,
+    datasets: [{
+      label: title || "Series",
+      data,
+    }],
+  };
+  return (
+    <div style={{ height }}>
+      <ReactChart type="bar" data={ds} options={commonOpts(title)} />
+    </div>
+  );
+});
