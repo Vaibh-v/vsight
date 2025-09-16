@@ -1,120 +1,112 @@
 // pages/insight.tsx
 import { useState } from "react";
+import { useSession, signIn } from "next-auth/react";
 import GSCSitePicker from "@/components/GSCSitePicker";
-import { safeFetchJSON, toISO } from "@/lib/safeFetch";
+import { fetchJSON, toYmd, assertDateString, safeNum } from "@/lib/fetcher";
 
-type Row = { keys: string[]; clicks: number; impressions: number; ctr: number; position: number };
+type MoversRow = { query: string; clicks: number; impressions: number; ctr: number; position: number; deltaClicks: number };
 
 export default function Insight() {
-  const [siteUrl, setSiteUrl] = useState<string | undefined>();
-  const [start, setStart] = useState(toISO(new Date(Date.now() - 45 * 864e5))!);
-  const [end, setEnd] = useState(toISO(new Date())!);
+  const { data: session } = useSession();
+  const [site, setSite] = useState("");
+  const [start, setStart] = useState(() => { const d = new Date(); d.setMonth(d.getMonth()-1); return toYmd(d); });
+  const [end, setEnd] = useState(() => toYmd(new Date()));
+  const [error, setError] = useState("");
   const [highlights, setHighlights] = useState<string[]>([]);
-  const [top, setTop] = useState<Row[]>([]);
-  const [err, setErr] = useState("");
+  const [movers, setMovers] = useState<MoversRow[]>([]);
 
-  const run = async () => {
-    setErr(""); setHighlights([]); setTop([]);
+  if (!session) {
+    return <div className="max-w-5xl mx-auto p-6">
+      <div className="text-xl mb-4">AI Insight</div>
+      <button className="px-3 py-2 bg-black text-white rounded" onClick={() => signIn()}>Sign in</button>
+    </div>;
+  }
+
+  async function generate() {
     try {
-      if (!siteUrl) throw new Error("Select a GSC site.");
-      const mid = new Date((+new Date(start)) + ((+new Date(end) - +new Date(start)) / 2));
-      const prevStart = toISO(new Date(+new Date(start) - (+new Date(end) - +new Date(mid))))!;
-      const prevEnd = toISO(mid)!;
+      setError(""); setHighlights([]); setMovers([]);
+      assertDateString(start, "Start");
+      assertDateString(end, "End");
+      if (!site) throw new Error("Select a GSC site");
 
-      // Current period totals
-      const curr = await safeFetchJSON<{ rows: Row[] }>("/api/gsc/query", {
-        method: "POST",
-        body: JSON.stringify({ siteUrl, startDate: start, endDate: end, dimension: "query", rowLimit: 1000, sortBy: "clicks", sortDir: "desc" }),
-      });
+      const resp = await fetchJSON<{
+        totals: { clicks: number; impressions: number };
+        prevTotals: { clicks: number; impressions: number };
+        movers: { query: string; clicks: number; impressions: number; ctr: number; position: number; deltaClicks: number }[];
+      }>(`/api/gsc/insights?site=${encodeURIComponent(site)}&start=${start}&end=${end}`);
 
-      const prev = await safeFetchJSON<{ rows: Row[] }>("/api/gsc/query", {
-        method: "POST",
-        body: JSON.stringify({ siteUrl, startDate: prevStart, endDate: prevEnd, dimension: "query", rowLimit: 1000, sortBy: "clicks", sortDir: "desc" }),
-      });
+      const deltas: string[] = [];
+      const cDelta = resp.totals.clicks - resp.prevTotals.clicks;
+      const iDelta = resp.totals.impressions - resp.prevTotals.impressions;
 
-      const sum = (xs: Row[], k: keyof Row) => xs.reduce((s, r) => s + (Number(r[k]) || 0), 0);
-      const cClicks = sum(curr.rows, "clicks");
-      const pClicks = sum(prev.rows, "clicks");
-      const cImpr = sum(curr.rows, "impressions");
-      const pImpr = sum(prev.rows, "impressions");
-      const pct = (a: number, b: number) => (b === 0 ? 0 : ((a - b) / b) * 100);
+      if (cDelta > 0) deltas.push(`Clicks up ${safeNum((cDelta / Math.max(resp.prevTotals.clicks, 1)) * 100, 1)}% vs previous half.`);
+      else if (cDelta < 0) deltas.push(`Clicks down ${safeNum((Math.abs(cDelta) / Math.max(resp.prevTotals.clicks, 1)) * 100, 1)}% vs previous half.`);
 
-      const hi = [
-        `Clicks ${pct(cClicks, pClicks) >= 0 ? "up" : "down"} ${Math.abs(pct(cClicks, pClicks)).toFixed(1)}% vs previous half.`,
-        `Impressions ${pct(cImpr, pImpr) >= 0 ? "up" : "down"} ${Math.abs(pct(cImpr, pImpr)).toFixed(1)}% vs previous half.`,
-      ];
+      if (iDelta > 0) deltas.push(`Impressions up ${safeNum((iDelta / Math.max(resp.prevTotals.impressions, 1)) * 100, 1)}% vs previous half.`);
+      else if (iDelta < 0) deltas.push(`Impressions down ${safeNum((Math.abs(iDelta) / Math.max(resp.prevTotals.impressions, 1)) * 100, 1)}% vs previous half.`);
 
-      // Movers: rank queries by click delta
-      const prevMap = new Map(prev.rows.map(r => [r.keys?.[0], r]));
-      const movers = curr.rows
-        .map(r => ({ ...r, delta: r.clicks - (prevMap.get(r.keys?.[0])?.clicks || 0) }))
-        .sort((a, b) => b.delta - a.delta)
-        .slice(0, 10);
-
-      setHighlights(hi);
-      setTop(movers);
-    } catch (e: any) {
-      setErr(e.message || String(e));
+      setHighlights(deltas);
+      setMovers(resp.movers.slice(0, 10));
+    } catch (e:any) {
+      setError(e.message || String(e));
     }
-  };
+  }
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <div className="col-span-2">
+    <div className="max-w-[1200px] mx-auto p-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+        <div>
           <label className="block text-sm mb-1">GSC Site</label>
-          <GSCSitePicker value={siteUrl} onChange={setSiteUrl} />
+          <GSCSitePicker value={site} onChange={setSite} />
         </div>
+        <div />
         <div>
           <label className="block text-sm mb-1">Start</label>
-          <input type="date" className="border rounded px-2 py-1 w-full"
-            value={start} onChange={e => setStart(toISO(e.target.value) || start)} />
+          <input type="date" value={start} onChange={e => setStart(e.target.value)} className="border rounded px-3 py-2" />
         </div>
         <div>
           <label className="block text-sm mb-1">End</label>
-          <input type="date" className="border rounded px-2 py-1 w-full"
-            value={end} onChange={e => setEnd(toISO(e.target.value) || end)} />
-        </div>
-        <div className="md:col-start-4 flex items-end">
-          <button className="px-3 py-2 rounded bg-purple-600 text-white" onClick={run}>Generate insights</button>
+          <input type="date" value={end} onChange={e => setEnd(e.target.value)} className="border rounded px-3 py-2" />
         </div>
       </div>
 
-      {err && <div className="text-red-600 text-sm">{err}</div>}
+      <div className="mt-4 flex gap-3 items-center">
+        <button onClick={generate} className="px-3 py-2 rounded bg-violet-600 text-white">Generate insights</button>
+        {error && <div className="text-red-600 text-sm">{error}</div>}
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="border rounded p-3">
-          <div className="font-medium mb-2">Highlights</div>
-          <ul className="list-disc pl-5 text-sm">
-            {highlights.length === 0 && <li>No insights yet. Click Generate.</li>}
-            {highlights.map((h, i) => <li key={i}>{h}</li>)}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+        <div className="border rounded">
+          <div className="px-3 py-2 font-medium border-b">Highlights</div>
+          <ul className="px-5 py-3 list-disc">
+            {highlights.length ? highlights.map((h,i) => <li key={i}>{h}</li>) : <li className="text-gray-400">—</li>}
           </ul>
         </div>
-
-        <div className="border rounded p-3 overflow-auto">
-          <div className="font-medium mb-2">Top movers (by click delta)</div>
+        <div className="border rounded">
+          <div className="px-3 py-2 font-medium border-b">Top movers (by click delta)</div>
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left border-b">
-                <th className="py-2">Query</th>
-                <th className="py-2">Clicks</th>
-                <th className="py-2">Impr.</th>
-                <th className="py-2">CTR</th>
-                <th className="py-2">Pos</th>
-                <th className="py-2">Δ Clicks</th>
+              <tr className="text-left">
+                <th className="px-3 py-2">Query</th>
+                <th className="px-3 py-2 text-right">Clicks</th>
+                <th className="px-3 py-2 text-right">Impr.</th>
+                <th className="px-3 py-2 text-right">CTR</th>
+                <th className="px-3 py-2 text-right">Pos</th>
+                <th className="px-3 py-2 text-right">Δ Clicks</th>
               </tr>
             </thead>
             <tbody>
-              {top.length === 0 && <tr><td colSpan={6} className="py-4 text-gray-500">No data.</td></tr>}
-              {top.map((r, i) => (
+              {movers.map((r, i) => (
                 <tr key={i} className="border-b last:border-0">
-                  <td className="py-2 break-all">{r.keys?.[0] ?? "-"}</td>
-                  <td className="py-2">{r.clicks ?? 0}</td>
-                  <td className="py-2">{r.impressions ?? 0}</td>
-                  <td className="py-2">{((r.ctr ?? 0) * 100).toFixed(2)}%</td>
-                  <td className="py-2">{(r.position ?? 0).toFixed(1)}</td>
+                  <td className="px-3 py-2 truncate">{r.query}</td>
+                  <td className="px-3 py-2 text-right">{safeNum(r.clicks, 0)}</td>
+                  <td className="px-3 py-2 text-right">{safeNum(r.impressions, 0)}</td>
+                  <td className="px-3 py-2 text-right">{safeNum(r.ctr * 100, 1)}%</td>
+                  <td className="px-3 py-2 text-right">{safeNum(r.position, 1)}</td>
+                  <td className="px-3 py-2 text-right">{safeNum(r.deltaClicks, 0)}</td>
                 </tr>
               ))}
+              {!movers.length && <tr><td className="px-3 py-3 text-gray-400">No data</td></tr>}
             </tbody>
           </table>
         </div>
