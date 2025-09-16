@@ -1,18 +1,13 @@
 import React from "react";
 
 type Props = {
-  /** Value like "COUNTRY_US". Empty string or undefined = all countries */
+  /** e.g. "COUNTRY_US". Empty/undefined = all countries */
   value?: string;
   onChange: (v: string | undefined) => void;
   className?: string;
   disabled?: boolean;
 };
 
-/**
- * Lightweight <select> for Google Search Console's country filter.
- * GSC expects values like "COUNTRY_US", "COUNTRY_IN", etc.
- * Add more countries below as needed.
- */
 const OPTIONS: Array<{ code: string; label: string }> = [
   { code: "", label: "All countries" },
   { code: "COUNTRY_US", label: "United States" },
@@ -32,10 +27,8 @@ const OPTIONS: Array<{ code: string; label: string }> = [
   { code: "COUNTRY_NO", label: "Norway" },
   { code: "COUNTRY_DK", label: "Denmark" },
   { code: "COUNTRY_CH", label: "Switzerland" },
-  { code: "COUNTRY_AT", label: "Austria" },
   { code: "COUNTRY_BE", label: "Belgium" },
   { code: "COUNTRY_PL", label: "Poland" },
-  { code: "COUNTRY_CZ", label: "Czechia" },
   { code: "COUNTRY_PT", label: "Portugal" },
   { code: "COUNTRY_GR", label: "Greece" },
   { code: "COUNTRY_IL", label: "Israel" },
@@ -62,12 +55,7 @@ const OPTIONS: Array<{ code: string; label: string }> = [
   { code: "COUNTRY_KW", label: "Kuwait" },
 ];
 
-export default function CountrySelect({
-  value,
-  onChange,
-  className,
-  disabled,
-}: Props) {
+export default function CountrySelect({ value, onChange, className, disabled }: Props) {
   return (
     <select
       className={
@@ -75,10 +63,7 @@ export default function CountrySelect({
         "w-full h-10 rounded-md border border-gray-300 bg-white px-3 text-sm"
       }
       value={value ?? ""}
-      onChange={(e) => {
-        const v = e.target.value;
-        onChange(v === "" ? undefined : v);
-      }}
+      onChange={(e) => onChange(e.target.value || undefined)}
       disabled={disabled}
     >
       {OPTIONS.map((o) => (
