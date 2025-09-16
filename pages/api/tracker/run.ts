@@ -6,19 +6,19 @@ type SearchRow = {
   keys: string[]; clicks: number; impressions: number; ctr: number; position: number;
 };
 
-// Minimal 2-letter → 3-letter map for common cases; extend as needed.
-const ISO2_TO_ISO3: Record<string, string> = {
-  US: "USA", IN: "IND", GB: "GBR", UK: "GBR", CA: "CAN", AU: "AUS", NZ: "NZL",
-  DE: "DEU", FR: "FRA", ES: "ESP", IT: "ITA", NL: "NLD", BR: "BRA", MX: "MEX",
-  ZA: "ZAF", SG: "SGP", AE: "ARE"
-};
-
-function normalizeCountryToISO3(input?: string): string | null {
-  if (!input) return null;
-  const v = input.trim().toUpperCase().replace(/^COUNTRY_/, "");
-  if (v.length === 3) return v;         // already alpha-3 (e.g., USA)
-  if (v.length === 2) return ISO2_TO_ISO3[v] ?? null;
-  return null;
+function normalizeCountry(input?: string): string | undefined {
+  if (!input) return undefined;
+  const s = input.trim().toUpperCase();
+  if (!s) return undefined;
+  if (s.startsWith("COUNTRY_")) return s;         // already in GSC format
+  const map: Record<string, string> = {
+    US: "COUNTRY_US", USA: "COUNTRY_US", "UNITED STATES": "COUNTRY_US", "UNITED STATES OF AMERICA": "COUNTRY_US",
+    IN: "COUNTRY_IN", INDIA: "COUNTRY_IN",
+    GB: "COUNTRY_GB", UK: "COUNTRY_GB", "UNITED KINGDOM": "COUNTRY_GB",
+    CA: "COUNTRY_CA", CANADA: "COUNTRY_CA",
+    AU: "COUNTRY_AU", AUSTRALIA: "COUNTRY_AU",
+  };
+  return map[s] ?? (s.length === 2 ? `COUNTRY_${s}` : undefined);
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -38,13 +38,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       endDate,
       rowLimit = 25,
       startRow = 0,
-      country,         // e.g. US / USA
-      device,          // DESKTOP | MOBILE | TABLET
-      query,           // keyword filter string
-      queryMatch = "contains", // contains | equals
-      dimension = "query",     // query | page
+      country,
+      device,
+      query,
+      queryMatch = "contains",
+      dimension = "query",
       sortBy = "clicks",
-      sortDir = "desc"
+      sortDir = "desc",
     } = req.body ?? {};
 
     if (!siteUrl) return res.status(400).json({ error: "Missing siteUrl" });
@@ -52,16 +52,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const end = (endDate ?? new Date().toISOString().slice(0, 10));
     const start = (startDate ?? new Date(Date.now() - 27 * 86400000).toISOString().slice(0, 10));
 
-    // Build GSC filters
     const filters: any[] = [];
-    const countryISO3 = normalizeCountryToISO3(country);
-    if (countryISO3) {
-      // GSC 'country' expects alpha-3 like "USA", "IND"
-      filters.push({ dimension: "country", operator: "equals", expression: countryISO3 });
-    }
-    if (device) {
-      filters.push({ dimension: "device", operator: "equals", expression: String(device).toUpperCase() });
-    }
+    const normCountry = normalizeCountry(country);
+    if (normCountry) filters.push({ dimension: "country", operator: "equals", expression: normCountry });
+    if (device) filters.push({ dimension: "device", operator: "equals", expression: String(device).toUpperCase() });
     if (query) {
       filters.push({
         dimension: "query",
@@ -93,7 +87,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     let rows =
       (j.rows ?? []).map((row) => ({
-        key: row.keys?.[0] ?? (dimension === "page" ? "(page not set)" : "(query not set)"),
+        key: row.keys?.[0] ?? "(not set)",
         clicks: row.clicks ?? 0,
         impressions: row.impressions ?? 0,
         ctr: row.ctr ?? 0,
