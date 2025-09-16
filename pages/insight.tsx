@@ -1,112 +1,90 @@
-// pages/insight.tsx
 import { useState } from "react";
 import { useSession, signIn } from "next-auth/react";
 import GSCSitePicker from "@/components/GSCSitePicker";
-import { fetchJSON, toYmd, assertDateString, safeNum } from "@/lib/fetcher";
 
-type MoversRow = { query: string; clicks: number; impressions: number; ctr: number; position: number; deltaClicks: number };
+type InsightRow = { query: string; clicks: number; impressions: number; ctr: number; position: number; deltaClicks?: number };
 
 export default function Insight() {
-  const { data: session } = useSession();
-  const [site, setSite] = useState("");
-  const [start, setStart] = useState(() => { const d = new Date(); d.setMonth(d.getMonth()-1); return toYmd(d); });
-  const [end, setEnd] = useState(() => toYmd(new Date()));
-  const [error, setError] = useState("");
+  const { data: session, status } = useSession();
+  const [siteUrl, setSiteUrl] = useState<string>("");
+  const [start, setStart] = useState<string>("2025-08-17");
+  const [end, setEnd] = useState<string>("2025-09-16");
   const [highlights, setHighlights] = useState<string[]>([]);
-  const [movers, setMovers] = useState<MoversRow[]>([]);
+  const [movers, setMovers] = useState<InsightRow[]>([]);
 
-  if (!session) {
-    return <div className="max-w-5xl mx-auto p-6">
-      <div className="text-xl mb-4">AI Insight</div>
-      <button className="px-3 py-2 bg-black text-white rounded" onClick={() => signIn()}>Sign in</button>
-    </div>;
-  }
+  if (status === "loading") return null;
+  if (!session) return <div className="p-6"><button className="px-3 py-2 rounded bg-black text-white" onClick={() => signIn()}>Sign in</button></div>;
 
   async function generate() {
     try {
-      setError(""); setHighlights([]); setMovers([]);
-      assertDateString(start, "Start");
-      assertDateString(end, "End");
-      if (!site) throw new Error("Select a GSC site");
-
-      const resp = await fetchJSON<{
-        totals: { clicks: number; impressions: number };
-        prevTotals: { clicks: number; impressions: number };
-        movers: { query: string; clicks: number; impressions: number; ctr: number; position: number; deltaClicks: number }[];
-      }>(`/api/gsc/insights?site=${encodeURIComponent(site)}&start=${start}&end=${end}`);
-
-      const deltas: string[] = [];
-      const cDelta = resp.totals.clicks - resp.prevTotals.clicks;
-      const iDelta = resp.totals.impressions - resp.prevTotals.impressions;
-
-      if (cDelta > 0) deltas.push(`Clicks up ${safeNum((cDelta / Math.max(resp.prevTotals.clicks, 1)) * 100, 1)}% vs previous half.`);
-      else if (cDelta < 0) deltas.push(`Clicks down ${safeNum((Math.abs(cDelta) / Math.max(resp.prevTotals.clicks, 1)) * 100, 1)}% vs previous half.`);
-
-      if (iDelta > 0) deltas.push(`Impressions up ${safeNum((iDelta / Math.max(resp.prevTotals.impressions, 1)) * 100, 1)}% vs previous half.`);
-      else if (iDelta < 0) deltas.push(`Impressions down ${safeNum((Math.abs(iDelta) / Math.max(resp.prevTotals.impressions, 1)) * 100, 1)}% vs previous half.`);
-
-      setHighlights(deltas);
-      setMovers(resp.movers.slice(0, 10));
-    } catch (e:any) {
-      setError(e.message || String(e));
+      const res = await fetch("/api/gsc/insights", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ siteUrl, start, end, rowLimit: 20 })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error ?? "Failed");
+      setHighlights(json.highlights ?? []);
+      setMovers(json.movers ?? []);
+    } catch (e: any) {
+      console.error(e);
+      alert(e.message ?? "Failed to generate insights");
+      setHighlights([]);
+      setMovers([]);
     }
   }
 
   return (
-    <div className="max-w-[1200px] mx-auto p-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+    <div className="p-6 space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div>
           <label className="block text-sm mb-1">GSC Site</label>
-          <GSCSitePicker value={site} onChange={setSite} />
+          <GSCSitePicker value={siteUrl} onChange={setSiteUrl} />
         </div>
-        <div />
         <div>
           <label className="block text-sm mb-1">Start</label>
-          <input type="date" value={start} onChange={e => setStart(e.target.value)} className="border rounded px-3 py-2" />
+          <input value={start} onChange={e => setStart(e.target.value)} type="date" className="border rounded px-2 py-1 w-full" />
         </div>
         <div>
           <label className="block text-sm mb-1">End</label>
-          <input type="date" value={end} onChange={e => setEnd(e.target.value)} className="border rounded px-3 py-2" />
+          <input value={end} onChange={e => setEnd(e.target.value)} type="date" className="border rounded px-2 py-1 w-full" />
         </div>
       </div>
 
-      <div className="mt-4 flex gap-3 items-center">
-        <button onClick={generate} className="px-3 py-2 rounded bg-violet-600 text-white">Generate insights</button>
-        {error && <div className="text-red-600 text-sm">{error}</div>}
-      </div>
+      <button onClick={generate} className="px-3 py-2 rounded bg-violet-600 text-white">Generate insights</button>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-        <div className="border rounded">
-          <div className="px-3 py-2 font-medium border-b">Highlights</div>
-          <ul className="px-5 py-3 list-disc">
-            {highlights.length ? highlights.map((h,i) => <li key={i}>{h}</li>) : <li className="text-gray-400">—</li>}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="border rounded p-3">
+          <div className="font-medium mb-2">Highlights</div>
+          <ul className="list-disc pl-6">
+            {highlights.map((h, i) => <li key={i}>{h}</li>)}
+            {highlights.length === 0 && <li className="text-gray-500">—</li>}
           </ul>
         </div>
-        <div className="border rounded">
-          <div className="px-3 py-2 font-medium border-b">Top movers (by click delta)</div>
-          <table className="w-full text-sm">
+        <div className="border rounded p-3 overflow-auto">
+          <div className="font-medium mb-2">Top movers (by click delta)</div>
+          <table className="min-w-[700px] w-full text-sm">
             <thead>
-              <tr className="text-left">
-                <th className="px-3 py-2">Query</th>
-                <th className="px-3 py-2 text-right">Clicks</th>
-                <th className="px-3 py-2 text-right">Impr.</th>
-                <th className="px-3 py-2 text-right">CTR</th>
-                <th className="px-3 py-2 text-right">Pos</th>
-                <th className="px-3 py-2 text-right">Δ Clicks</th>
+              <tr className="text-left border-b">
+                <th className="py-2 pr-4">Query</th>
+                <th className="py-2 pr-4">Clicks</th>
+                <th className="py-2 pr-4">Impr.</th>
+                <th className="py-2 pr-4">CTR</th>
+                <th className="py-2 pr-4">Pos</th>
+                <th className="py-2 pr-4">Δ Clicks</th>
               </tr>
             </thead>
             <tbody>
               {movers.map((r, i) => (
-                <tr key={i} className="border-b last:border-0">
-                  <td className="px-3 py-2 truncate">{r.query}</td>
-                  <td className="px-3 py-2 text-right">{safeNum(r.clicks, 0)}</td>
-                  <td className="px-3 py-2 text-right">{safeNum(r.impressions, 0)}</td>
-                  <td className="px-3 py-2 text-right">{safeNum(r.ctr * 100, 1)}%</td>
-                  <td className="px-3 py-2 text-right">{safeNum(r.position, 1)}</td>
-                  <td className="px-3 py-2 text-right">{safeNum(r.deltaClicks, 0)}</td>
+                <tr key={i} className="border-b last:border-b-0">
+                  <td className="py-2 pr-4">{r.query}</td>
+                  <td className="py-2 pr-4">{r.clicks}</td>
+                  <td className="py-2 pr-4">{r.impressions}</td>
+                  <td className="py-2 pr-4">{(r.ctr * 100).toFixed(1)}%</td>
+                  <td className="py-2 pr-4">{r.position.toFixed(1)}</td>
+                  <td className="py-2 pr-4">{r.deltaClicks ?? "—"}</td>
                 </tr>
               ))}
-              {!movers.length && <tr><td className="px-3 py-3 text-gray-400">No data</td></tr>}
+              {movers.length === 0 && <tr><td className="py-6 text-gray-500" colSpan={6}>No data</td></tr>}
             </tbody>
           </table>
         </div>
