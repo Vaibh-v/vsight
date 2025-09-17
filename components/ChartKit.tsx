@@ -1,77 +1,129 @@
 // components/ChartKit.tsx
+// Modern wrappers around chart.js + react-chartjs-2
+
 "use client";
 
+import React from "react";
 import {
-  Chart, LineController, LineElement, PointElement, LinearScale,
-  CategoryScale, BarController, BarElement, Tooltip, Legend, Filler,
+  Chart,
+  LineController,
+  LineElement,
+  PointElement,
+  BarController,
+  BarElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend,
+  Filler,
 } from "chart.js";
-import { Chart as ReactChart } from "react-chartjs-2";
-import { memo } from "react";
+import { Line, Bar } from "react-chartjs-2";
 
 Chart.register(
-  LineController, LineElement, PointElement, LinearScale, CategoryScale,
-  BarController, BarElement, Tooltip, Legend, Filler
+  LineController,
+  LineElement,
+  PointElement,
+  BarController,
+  BarElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend,
+  Filler
 );
 
-type LineProps = {
+export type LineProps = {
   labels: string[];
   data: number[];
   height?: number;
   title?: string;
 };
 
-type BarProps = {
+export type BarProps = {
   labels: string[];
   data: number[];
   height?: number;
   title?: string;
 };
 
-const commonOpts = (title?: string) => ({
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { display: false },
-    title: title ? { display: true, text: title } : { display: false },
-    tooltip: { intersect: false, mode: "index" as const },
-  },
-  interaction: { intersect: false, mode: "index" as const },
-  scales: {
-    x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } },
-    y: { grid: { color: "#eee" } },
-  },
-});
+const baseFont = {
+  family:
+    "'Inter', ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto",
+};
 
-export const LineChartMini = memo(function LineChartMini(props: LineProps) {
-  const { labels, data, height = 220, title } = props;
+function lineOptions(title?: string): any {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      title: title ? { display: true, text: title } : undefined,
+      tooltip: { mode: "index", intersect: false },
+    },
+    scales: {
+      x: { ticks: { maxRotation: 0, autoSkip: true, font: baseFont } },
+      y: { ticks: { font: baseFont }, beginAtZero: true },
+    },
+    elements: { line: { tension: 0.35 }, point: { radius: 0 } },
+  };
+}
+
+function barOptions(title?: string): any {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      title: title ? { display: true, text: title } : undefined,
+      tooltip: { mode: "index", intersect: false },
+    },
+    scales: {
+      x: { ticks: { font: baseFont } },
+      y: { ticks: { font: baseFont }, beginAtZero: true },
+    },
+  };
+}
+
+// -------- Public components --------
+
+export function LineChartModern({ labels, data, height = 220, title }: LineProps) {
   const ds = {
     labels,
-    datasets: [{
-      label: title || "Series",
-      data,
-      fill: true,
-      tension: 0.35,
-    }],
+    datasets: [
+      {
+        label: title ?? "Series",
+        data,
+        fill: true,
+        borderWidth: 2,
+        pointRadius: 0,
+      },
+    ],
   };
   return (
     <div style={{ height }}>
-      <ReactChart type="line" data={ds} options={commonOpts(title)} />
+      <Line data={ds} options={lineOptions(title)} />
     </div>
   );
-});
+}
 
-export const BarChartMini = memo(function BarChartMini(props: BarProps) {
-  const { labels, data, height = 220, title } = props;
+export function BarChartModern({ labels, data, height = 260, title }: BarProps) {
   const ds = {
     labels,
-    datasets: [{
-      label: title || "Series",
-      data,
-    }],
+    datasets: [
+      {
+        label: title ?? "Series",
+        data,
+        borderWidth: 0,
+      },
+    ],
   };
   return (
     <div style={{ height }}>
-      <ReactChart type="bar" data={ds} options={commonOpts(title)} />
+      <Bar data={ds} options={barOptions(title)} />
     </div>
   );
-});
+}
+
+// Back-compat aliases if other files still import "Mini"
+export const LineChartMini = LineChartModern;
+export const BarChartMini = BarChartModern;
