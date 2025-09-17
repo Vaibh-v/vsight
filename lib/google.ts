@@ -95,4 +95,118 @@ export async function gaRunReport(...args: any[]): Promise<{ rows: Record<string
   if (isReqRes(args[0], args[1])) {
     token = await getAccessToken(args[0] as NextApiRequest, args[1] as NextApiResponse);
     propertyId = String(args[2]);
-    c
+    const d = args[3];
+    const e = args[4];
+
+    if (typeof d === "object" && d) {
+      body = d; // custom body
+    } else if (typeof d === "string" && typeof e === "string") {
+      body = {
+        dimensions: [{ name: "date" }],
+        metrics: [{ name: "sessions" }],
+        dateRanges: [{ startDate: d, endDate: e }],
+      };
+    }
+  } else {
+    token = String(args[0]);
+    propertyId = String(args[1]);
+    const d = args[2];
+    const e = args[3];
+
+    if (typeof d === "object" && d) {
+      body = d;
+    } else if (typeof d === "string" && typeof e === "string") {
+      body = {
+        dimensions: [{ name: "date" }],
+        metrics: [{ name: "sessions" }],
+        dateRanges: [{ startDate: d, endDate: e }],
+      };
+    }
+  }
+
+  if (!propertyId) throw new Error("propertyId required");
+  if (!body) throw new Error("Invalid arguments for gaRunReport: pass (body) or (start, end).");
+
+  const url = `https://analyticsdata.googleapis.com/v1beta/${propertyId}:runReport`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data: any = await forwardJsonOrText(r);
+
+  const rows =
+    data?.rows?.map((row: any) => {
+      const out: Record<string, string | number> = {};
+      data.dimensionHeaders?.forEach((h: any, i: number) => {
+        out[h.name] = row.dimensionValues?.[i]?.value ?? "";
+      });
+      data.metricHeaders?.forEach((h: any, i: number) => {
+        const v = row.metricValues?.[i]?.value;
+        out[h.name] = v !== undefined ? Number(v) : 0;
+      });
+      return out;
+    }) ?? [];
+
+  return { rows, raw: data };
+}
+
+/* ------------------------------------------------------------------ */
+/*                   GSC daily clicks / impressions                    */
+/* ------------------------------------------------------------------ */
+/**
+ * Flexible usage:
+ *  - gscTimeseriesClicks(token, siteUrl, start, end)
+ *  - gscTimeseriesClicks(req, res, siteUrl, start, end)
+ */
+export async function gscTimeseriesClicks(...args: any[]): Promise<{
+  rows: { date: string; clicks: number; impressions: number; ctr: number; position: number }[];
+  raw: any;
+}> {
+  let token: string;
+  let siteUrl: string;
+  let start: string;
+  let end: string;
+
+  if (isReqRes(args[0], args[1])) {
+    token = await getAccessToken(args[0] as NextApiRequest, args[1] as NextApiResponse);
+    siteUrl = String(args[2]);
+    start = String(args[3]);
+    end = String(args[4]);
+  } else {
+    token = String(args[0]);
+    siteUrl = String(args[1]);
+    start = String(args[2]);
+    end = String(args[3]);
+  }
+
+  if (!siteUrl) throw new Error("siteUrl required");
+  if (!start || !end) throw new Error("start and end required (YYYY-MM-DD)");
+
+  const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
+    siteUrl
+  )}/searchAnalytics/query`;
+
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDate: start,
+      endDate: end,
+      dimensions: ["date"],
+      rowLimit: 1000,
+    }),
+  });
+  const data: any = await forwardJsonOrText(r);
+
+  const rows =
+    data?.rows?.map((x: any) => ({
+      date: x.keys?.[0] ?? "",
+      clicks: Number(x.clicks ?? 0),
+      impressions: Number(x.impressions ?? 0),
+      ctr: Number(x.ctr ?? 0),
+      position: Number(x.position ?? 0),
+    })) ?? [];
+
+  return { rows, raw: data };
+}
