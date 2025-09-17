@@ -152,6 +152,40 @@ export async function gaRunReport(...args: any[]): Promise<{ rows: Record<string
 }
 
 /* ------------------------------------------------------------------ */
+/*                        GSC: list verified sites                     */
+/* ------------------------------------------------------------------ */
+/**
+ * Flexible usage:
+ *  - gscSites(token)
+ *  - gscSites(req, res)
+ *
+ * Returns:
+ *   { sites: { siteUrl: string; permissionLevel?: string; type?: string }[], raw }
+ */
+export async function gscSites(...args: any[]): Promise<{
+  sites: { siteUrl: string; permissionLevel?: string; type?: string }[];
+  raw: any;
+}> {
+  const token = isReqRes(args[0], args[1])
+    ? await getAccessToken(args[0] as NextApiRequest, args[1] as NextApiResponse)
+    : String(args[0]);
+
+  // Webmasters v3 sites list
+  const url = "https://www.googleapis.com/webmasters/v3/sites";
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const data: any = await forwardJsonOrText(r);
+
+  const sites =
+    (data?.siteEntry ?? []).map((s: any) => ({
+      siteUrl: s.siteUrl,
+      permissionLevel: s.permissionLevel,
+      type: s.siteType,
+    })) ?? [];
+
+  return { sites, raw: data };
+}
+
+/* ------------------------------------------------------------------ */
 /*                   GSC daily clicks / impressions                    */
 /* ------------------------------------------------------------------ */
 /**
