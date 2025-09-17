@@ -1,40 +1,42 @@
-// pages/api/gsc/top-queries.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
 import { gscTopQueries } from "@/lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.access_token) {
-      return res.status(401).json({ error: "Not authenticated" });
+    const token = await getToken({ req });
+    const accessToken = token?.accessToken as string | undefined;
+    if (!accessToken) return res.status(401).json({ error: "No Google token" });
+
+    const {
+      siteUrl,
+      startDate, endDate,
+      dimension = "query",
+      rowLimit = 25,
+      country, device,
+      keywordMode, keyword,
+      sort = "clicks", dir = "desc"
+    } = (req.method === "POST" ? req.body : req.query) as any;
+
+    if (!siteUrl || !startDate || !endDate) {
+      return res.status(400).json({ error: "siteUrl, startDate, endDate required" });
     }
 
-    // Accept both styles: start/end OR startDate/endDate, and rowLimit OR limit
-    const siteUrl =
-      (req.query.siteUrl as string | undefined) ?? (req.query.site as string | undefined);
-    const start =
-      (req.query.start as string | undefined) ?? (req.query.startDate as string | undefined);
-    const end =
-      (req.query.end as string | undefined) ?? (req.query.endDate as string | undefined);
-
-    // Prefer ?limit=, but tolerate legacy ?rowLimit=
-    const limitParam =
-      (req.query.limit as string | undefined) ?? (req.query.rowLimit as string | undefined);
-    const limit = limitParam ? Number(limitParam) : 1000;
-
-    if (!siteUrl || !start || !end) {
-      return res.status(400).json({ error: "Missing siteUrl/start/end" });
-    }
-
-    const rows = await gscTopQueries(String(token.access_token), String(siteUrl), {
-      startDate: String(start),
-      endDate: String(end),
-      limit,
+    const rows = await gscTopQueries(accessToken, String(siteUrl), {
+      startDate: String(startDate),
+      endDate: String(endDate),
+      dimension: String(dimension),
+      rowLimit: Number(rowLimit),
+      country: country ? String(country) : undefined,
+      device: device ? String(device) : undefined,
+      keywordMode: keywordMode ? String(keywordMode) : undefined,
+      keyword: keyword ? String(keyword) : undefined,
+      sort: String(sort),
+      dir: String(dir),
     });
 
-    return res.status(200).json({ rows });
+    res.status(200).json({ rows });
   } catch (e: any) {
-    return res.status(500).json({ error: e?.message || "Unexpected error" });
+    res.status(400).json({ error: e?.message || "Failed to fetch GSC queries" });
   }
 }
