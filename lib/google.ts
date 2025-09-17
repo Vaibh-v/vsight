@@ -1,10 +1,12 @@
 // /lib/google.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getServerSession } from "next-auth/next";
-// Adjust if your auth options file lives elsewhere:
+// If your auth options path differs, update the import below:
 import { authOptions } from "../pages/api/auth/[...nextauth]";
 
-/* -------------------- Core session/token helpers -------------------- */
+/* ------------------------------------------------------------------ */
+/*                          Session / Token                            */
+/* ------------------------------------------------------------------ */
 
 export async function getAccessToken(
   req: NextApiRequest,
@@ -38,53 +40,63 @@ export async function forwardJsonOrText(r: Response) {
     return json;
   } catch {
     if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}: ${txt.slice(0, 400)}`);
-    return txt; // OK but not JSON
+    return txt; // successful non-JSON
   }
 }
 
-/* -------------------- Back-compat shims used by your code --------------------
-   These accept either:
-   A) gaRunReport(token, propertyId, start, end)
-   B) gaRunReport(req, res, propertyId, start, end)
-   Same idea for gscTimeseriesClicks.
---------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------ */
+/*                         Back-compat helpers                         */
+/* ------------------------------------------------------------------ */
 
-function isReqRes(a: any, b: any): a is NextApiRequest {
+function looksLikeReqRes(a: any, b: any): a is NextApiRequest {
   return a && typeof a === "object" && "headers" in a && b && "status" in b;
 }
 
 /**
- * GA4: run a simple date x sessions report.
- * Returns: { rows: {date: string, sessions: number}[] }
+ * GA4 runReport
+ *
+ * Flexible signatures supported:
+ * 1) gaRunReport(token, propertyId, body)
+ * 2) gaRunReport(token, propertyId, start, end)
+ * 3) gaRunReport(req, res, propertyId, body)
+ * 4) gaRunReport(req, res, propertyId, start, end)
+ *
+ * When using (start, end), a default body is built:
+ *   dimensions: ["date"], metrics: ["sessions"], dateRanges: [{startDate, endDate}]
  */
 export async function gaRunReport(
   a: string | NextApiRequest,
   b: string | NextApiResponse,
-  propertyId?: string,
-  start?: string,
-  end?: string
-): Promise<{ rows: { date: string; sessions: number }[] }> {
-  let token: string;
-  let prop = propertyId;
-  let s = start;
-  let e = end;
+  propertyId: string,
+  bodyOrStart: Record<string, any> | string,
+  maybeEnd?: string
+): Promise<{ rows: { [k: string]: string | number }[]; raw: any }> {
+  // Resolve token
+  const token = looksLikeReqRes(a, b)
+    ? await getAccessToken(a as NextApiRequest, b as NextApiResponse)
+    : String(a);
 
-  if (isReqRes(a, b)) {
-    token = await getAccessToken(a as NextApiRequest, b as NextApiResponse);
+  if (!propertyId) throw new Error("propertyId required");
+
+  // Build body
+  let body: any;
+  if (typeof bodyOrStart === "object" && bodyOrStart) {
+    body = bodyOrStart;
   } else {
-    token = String(a);
-    prop = String(b);
+    const start = String(bodyOrStart);
+    const end = String(maybeEnd);
+    if (!start || !end)
+      throw new Error(
+        "When not passing a body object, start and end (YYYY-MM-DD) are required."
+      );
+    body = {
+      dimensions: [{ name: "date" }],
+      metrics: [{ name: "sessions" }],
+      dateRanges: [{ startDate: start, endDate: end }],
+    };
   }
-  if (!prop) throw new Error("propertyId required");
-  if (!s || !e) throw new Error("start and end required (YYYY-MM-DD)");
 
-  const url = `https://analyticsdata.googleapis.com/v1beta/${prop}:runReport`;
-  const body = {
-    dateRanges: [{ startDate: s, endDate: e }],
-    metrics: [{ name: "sessions" }],
-    dimensions: [{ name: "date" }],
-  };
-
+  const url = `https://analyticsdata.googleapis.com/v1beta/${propertyId}:runReport`;
   const r = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -92,55 +104,58 @@ export async function gaRunReport(
   });
 
   const data = await forwardJsonOrText(r);
-  const rows =
-    (data as any).rows?.map((row: any) => ({
-      date: row.dimensionValues?.[0]?.value ?? "",
-      sessions: Number(row.metricValues?.[0]?.value ?? 0),
-    })) ?? [];
 
-  return { rows };
+  // Normalize rows into a simple array of key/value pairs
+  const rows =
+    (data as any).rows?.map((row: any) => {
+      const obj: Record<string, string | number> = {};
+      (data as any).dimensionHeaders?.forEach((d: any, i: number) => {
+        obj[d.name] = row.dimensionValues?.[i]?.value ?? "";
+      });
+      (data as any).metricHeaders?.forEach((m: any, i: number) => {
+        const val = row.metricValues?.[i]?.value;
+        obj[m.name] = val !== undefined ? Number(val) : 0;
+      });
+      return obj;
+    }) ?? [];
+
+  return { rows, raw: data };
 }
 
 /**
- * GSC: clicks & impressions timeseries by day.
- * Returns: { rows: {date, clicks, impressions, ctr, position}[] }
- * Usage:
+ * GSC timeseries by day (clicks, impressions, ctr, position).
+ *
+ * Signatures:
  *   gscTimeseriesClicks(token, siteUrl, start, end)
  *   gscTimeseriesClicks(req, res, siteUrl, start, end)
  */
 export async function gscTimeseriesClicks(
   a: string | NextApiRequest,
   b: string | NextApiResponse,
-  siteUrl?: string,
-  start?: string,
-  end?: string
+  siteUrl: string,
+  start: string,
+  end: string
 ): Promise<{
   rows: { date: string; clicks: number; impressions: number; ctr: number; position: number }[];
+  raw: any;
 }> {
-  let token: string;
-  let site = siteUrl;
-  let s = start;
-  let e = end;
+  const token = looksLikeReqRes(a, b)
+    ? await getAccessToken(a as NextApiRequest, b as NextApiResponse)
+    : String(a);
 
-  if (isReqRes(a, b)) {
-    token = await getAccessToken(a as NextApiRequest, b as NextApiResponse);
-  } else {
-    token = String(a);
-    site = String(b);
-  }
-  if (!site) throw new Error("siteUrl required");
-  if (!s || !e) throw new Error("start and end required (YYYY-MM-DD)");
+  if (!siteUrl) throw new Error("siteUrl required");
+  if (!start || !end) throw new Error("start and end required (YYYY-MM-DD)");
 
   const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
-    site
+    siteUrl
   )}/searchAnalytics/query`;
 
   const r = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      startDate: s,
-      endDate: e,
+      startDate: start,
+      endDate: end,
       dimensions: ["date"],
       rowLimit: 1000,
     }),
@@ -156,5 +171,5 @@ export async function gscTimeseriesClicks(
       position: Number(x.position ?? 0),
     })) ?? [];
 
-  return { rows };
+  return { rows, raw: data };
 }
