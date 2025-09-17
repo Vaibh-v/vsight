@@ -1,27 +1,15 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { getToken } from "next-auth/jwt";
 import { gscSites } from "@/lib/google";
 
-/**
- * Returns sites as { rows: { id, title }[] }
- * Compatible with components that expect {rows} shaped data.
- */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    // gscSites(req, res) -> { sites, raw }
-    const { sites } = await gscSites(req, res);
-
-    // Normalize to { id, title }
-    const rows = (sites ?? [])
-      .map((s: any) => ({
-        id: s?.siteUrl || s?.url || "",
-        title: s?.siteUrl || s?.url || "",
-      }))
-      .filter((x: any) => x.id);
-
-    res.status(200).json({ rows });
-  } catch (err: any) {
-    res.status(500).json({
-      error: err?.message || "Failed to list Search Console sites",
-    });
+    const token = await getToken({ req });
+    const accessToken = token?.accessToken as string | undefined;
+    if (!accessToken) return res.status(401).json({ error: "No Google token" });
+    const sites = await gscSites(accessToken);
+    res.status(200).json({ sites });
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message || "Failed to list GSC sites" });
   }
 }
