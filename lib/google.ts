@@ -45,13 +45,6 @@ function isReqRes(a: any, b: any): a is NextApiRequest {
 /* ------------------------------------------------------------------ */
 /*                    GA Admin: list GA4 properties                    */
 /* ------------------------------------------------------------------ */
-/**
- * Flexible usage:
- *  - gaListProperties(token)
- *  - gaListProperties(req, res)
- *
- * Returns: { properties: { name: string; propertyId: string; displayName?: string }[] }
- */
 export async function gaListProperties(...args: any[]): Promise<{
   properties: { name: string; propertyId: string; displayName?: string }[];
   raw: any;
@@ -154,14 +147,6 @@ export async function gaRunReport(...args: any[]): Promise<{ rows: Record<string
 /* ------------------------------------------------------------------ */
 /*                        GSC: list verified sites                     */
 /* ------------------------------------------------------------------ */
-/**
- * Flexible usage:
- *  - gscSites(token)
- *  - gscSites(req, res)
- *
- * Returns:
- *   { sites: { siteUrl: string; permissionLevel?: string; type?: string }[], raw }
- */
 export async function gscSites(...args: any[]): Promise<{
   sites: { siteUrl: string; permissionLevel?: string; type?: string }[];
   raw: any;
@@ -170,7 +155,6 @@ export async function gscSites(...args: any[]): Promise<{
     ? await getAccessToken(args[0] as NextApiRequest, args[1] as NextApiResponse)
     : String(args[0]);
 
-  // Webmasters v3 sites list
   const url = "https://www.googleapis.com/webmasters/v3/sites";
   const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   const data: any = await forwardJsonOrText(r);
@@ -188,11 +172,6 @@ export async function gscSites(...args: any[]): Promise<{
 /* ------------------------------------------------------------------ */
 /*                   GSC daily clicks / impressions                    */
 /* ------------------------------------------------------------------ */
-/**
- * Flexible usage:
- *  - gscTimeseriesClicks(token, siteUrl, start, end)
- *  - gscTimeseriesClicks(req, res, siteUrl, start, end)
- */
 export async function gscTimeseriesClicks(...args: any[]): Promise<{
   rows: { date: string; clicks: number; impressions: number; ctr: number; position: number }[];
   raw: any;
@@ -236,6 +215,105 @@ export async function gscTimeseriesClicks(...args: any[]): Promise<{
   const rows =
     data?.rows?.map((x: any) => ({
       date: x.keys?.[0] ?? "",
+      clicks: Number(x.clicks ?? 0),
+      impressions: Number(x.impressions ?? 0),
+      ctr: Number(x.ctr ?? 0),
+      position: Number(x.position ?? 0),
+    })) ?? [];
+
+  return { rows, raw: data };
+}
+
+/* ------------------------------------------------------------------ */
+/*                     GSC Top Queries (with filters)                  */
+/* ------------------------------------------------------------------ */
+/**
+ * Flexible usage:
+ *  - gscTopQueries(token, siteUrl, start, end, options?)
+ *  - gscTopQueries(req, res, siteUrl, start, end, options?)
+ *
+ * options: {
+ *   country?: string;         // ISO-3166 alpha-2 (e.g., "US", "IN")
+ *   device?: "DESKTOP" | "MOBILE" | "TABLET";
+ *   page?: string;            // filter by page URL
+ *   queryContains?: string;   // substring match for query
+ *   rowLimit?: number;        // default 100 (GSC UI default), max 25000
+ * }
+ *
+ * Returns rows: { query, clicks, impressions, ctr, position }
+ */
+export async function gscTopQueries(...args: any[]): Promise<{
+  rows: { query: string; clicks: number; impressions: number; ctr: number; position: number }[];
+  raw: any;
+}> {
+  let token: string;
+  let siteUrl: string;
+  let start: string;
+  let end: string;
+  let options: {
+    country?: string;
+    device?: "DESKTOP" | "MOBILE" | "TABLET";
+    page?: string;
+    queryContains?: string;
+    rowLimit?: number;
+  } = {};
+
+  if (isReqRes(args[0], args[1])) {
+    token = await getAccessToken(args[0] as NextApiRequest, args[1] as NextApiResponse);
+    siteUrl = String(args[2]);
+    start = String(args[3]);
+    end = String(args[4]);
+    options = (args[5] ?? {}) as typeof options;
+  } else {
+    token = String(args[0]);
+    siteUrl = String(args[1]);
+    start = String(args[2]);
+    end = String(args[3]);
+    options = (args[4] ?? {}) as typeof options;
+  }
+
+  if (!siteUrl) throw new Error("siteUrl required");
+  if (!start || !end) throw new Error("start and end required (YYYY-MM-DD)");
+
+  const body: any = {
+    startDate: start,
+    endDate: end,
+    dimensions: ["query"],
+    rowLimit: options.rowLimit ?? 100,
+  };
+
+  // Build filters if provided
+  const filters: any[] = [];
+  if (options.country) {
+    filters.push({ dimension: "country", operator: "equals", expression: options.country.toUpperCase() });
+  }
+  if (options.device) {
+    filters.push({ dimension: "device", operator: "equals", expression: options.device });
+  }
+  if (options.page) {
+    filters.push({ dimension: "page", operator: "equals", expression: options.page });
+  }
+  if (options.queryContains) {
+    filters.push({ dimension: "query", operator: "contains", expression: options.queryContains });
+  }
+  if (filters.length) {
+    body.dimensionFilterGroups = [{ groupType: "and", filters }];
+  }
+
+  const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
+    siteUrl
+  )}/searchAnalytics/query`;
+
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data: any = await forwardJsonOrText(r);
+
+  const rows =
+    data?.rows?.map((x: any) => ({
+      query: x.keys?.[0] ?? "",
       clicks: Number(x.clicks ?? 0),
       impressions: Number(x.impressions ?? 0),
       ctr: Number(x.ctr ?? 0),
