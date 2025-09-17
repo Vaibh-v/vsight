@@ -1,15 +1,20 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getToken } from "next-auth/jwt";
 import { gscSites } from "@/lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.access_token) return res.status(401).json({ error: "Not authenticated" });
+    const { sites } = await gscSites(req, res);
+    const rows = (sites ?? [])
+      .map((s: any) => ({
+        id: s?.siteUrl || s?.url || "",
+        title: s?.siteUrl || s?.url || "",
+      }))
+      .filter((x: any) => x.id);
 
-    const data = await gscSites(String(token.access_token));
-    return res.status(200).json(data);
-  } catch (e: any) {
-    return res.status(500).json({ error: e?.message || "Unexpected error" });
+    res.status(200).json({ rows });
+  } catch (err: any) {
+    res.status(500).json({
+      error: err?.message || "Failed to list Search Console sites",
+    });
   }
 }
