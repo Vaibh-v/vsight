@@ -24,85 +24,76 @@ export async function getAccessToken(
   return String(token);
 }
 
-async function parseJsonOrThrow(r: Response) {
+export async function forwardJsonOrText(r: Response) {
   const text = await r.text();
   try {
     const json = JSON.parse(text);
-    if (!r.ok) throw new Error(`HTTP ${r.status}: ${JSON.stringify(json).slice(0, 400)}`);
+    if (!r.ok) {
+      throw new Error(`HTTP ${r.status} ${r.statusText}: ${JSON.stringify(json).slice(0, 400)}`);
+    }
     return json;
   } catch {
-    if (!r.ok) throw new Error(`HTTP ${r.status}: ${text.slice(0, 400)}`);
-    return text;
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}: ${text.slice(0, 400)}`);
+    return text; // non-JSON but success
   }
 }
 
 function isReqRes(a: any, b: any): a is NextApiRequest {
-  return a && typeof a === "object" && "headers" in a && b && "status" in b;
+  return a && typeof a === "object" && "headers" in a && b && typeof b === "object" && "status" in b;
 }
 
 /* ------------------------------------------------------------------ */
 /*                          GA4 runReport API                          */
 /* ------------------------------------------------------------------ */
-/** Overloads (so your 3-arg call compiles):
- *  gaRunReport(token, propertyId, body)
- *  gaRunReport(token, propertyId, start, end)
- *  gaRunReport(req, res, propertyId, body)
- *  gaRunReport(req, res, propertyId, start, end)
+/**
+ * Flexible usage (no TS overloads needed):
+ *  - gaRunReport(token, propertyId, body)
+ *  - gaRunReport(token, propertyId, start, end)
+ *  - gaRunReport(req, res, propertyId, body)
+ *  - gaRunReport(req, res, propertyId, start, end)
  */
-export async function gaRunReport(
-  token: string,
-  propertyId: string,
-  body: Record<string, any>
-): Promise<{ rows: Record<string, string | number>[]; raw: any }>;
-export async function gaRunReport(
-  token: string,
-  propertyId: string,
-  start: string,
-  end: string
-): Promise<{ rows: Record<string, string | number>[]; raw: any }>;
-export async function gaRunReport(
-  req: NextApiRequest,
-  res: NextApiResponse,
-  propertyId: string,
-  body: Record<string, any>
-): Promise<{ rows: Record<string, string | number>[]; raw: any }>;
-export async function gaRunReport(
-  req: NextApiRequest,
-  res: NextApiResponse,
-  propertyId: string,
-  start: string,
-  end: string
-): Promise<{ rows: Record<string, string | number>[]; raw: any }>;
-export async function gaRunReport(
-  a: string | NextApiRequest,
-  b: string | NextApiResponse | string,
-  c: string,
-  d?: Record<string, any> | string,
-  e?: string
-): Promise<{ rows: Record<string, string | number>[]; raw: any }> {
-  // Resolve token
-  const token = isReqRes(a, b as any)
-    ? await getAccessToken(a as NextApiRequest, b as NextApiResponse)
-    : String(a);
+export async function gaRunReport(...args: any[]): Promise<{ rows: Record<string, string | number>[]; raw: any }> {
+  let token: string;
+  let propertyId: string;
+  let body: any | undefined;
 
-  const propertyId = String(c);
-  if (!propertyId) throw new Error("propertyId required");
+  // Resolve token & propertyId and detect which signature we got
+  if (isReqRes(args[0], args[1])) {
+    // (req, res, propertyId, bodyOrStart, maybeEnd)
+    token = await getAccessToken(args[0] as NextApiRequest, args[1] as NextApiResponse);
+    propertyId = String(args[2]);
+    const d = args[3];
+    const e = args[4];
 
-  // Build request body
-  let body: any;
-  if (typeof d === "object" && d) {
-    body = d; // full custom body
-  } else if (typeof d === "string" && typeof e === "string") {
-    body = {
-      dimensions: [{ name: "date" }],
-      metrics: [{ name: "sessions" }],
-      dateRanges: [{ startDate: d, endDate: e }],
-    };
+    if (typeof d === "object" && d) {
+      body = d; // full custom body
+    } else if (typeof d === "string" && typeof e === "string") {
+      body = {
+        dimensions: [{ name: "date" }],
+        metrics: [{ name: "sessions" }],
+        dateRanges: [{ startDate: d, endDate: e }],
+      };
+    }
   } else {
-    throw new Error(
-      "Invalid arguments. Pass (token, propertyId, body) or (token, propertyId, start, end)."
-    );
+    // (token, propertyId, bodyOrStart, maybeEnd)
+    token = String(args[0]);
+    propertyId = String(args[1]);
+    const d = args[2];
+    const e = args[3];
+
+    if (typeof d === "object" && d) {
+      body = d;
+    } else if (typeof d === "string" && typeof e === "string") {
+      body = {
+        dimensions: [{ name: "date" }],
+        metrics: [{ name: "sessions" }],
+        dateRanges: [{ startDate: d, endDate: e }],
+      };
+    }
   }
+
+  if (!propertyId) throw new Error("propertyId required");
+  if (!body) throw new Error("Invalid arguments for gaRunReport: pass (body) or (start, end).");
 
   const url = `https://analyticsdata.googleapis.com/v1beta/${propertyId}:runReport`;
   const r = await fetch(url, {
@@ -110,7 +101,7 @@ export async function gaRunReport(
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const data = await parseJsonOrThrow(r);
+  const data: any = await forwardJsonOrText(r);
 
   const rows =
     data?.rows?.map((row: any) => {
@@ -131,37 +122,31 @@ export async function gaRunReport(
 /* ------------------------------------------------------------------ */
 /*                   GSC daily clicks / impressions                    */
 /* ------------------------------------------------------------------ */
-/** Overloads:
- *  gscTimeseriesClicks(token, siteUrl, start, end)
- *  gscTimeseriesClicks(req, res, siteUrl, start, end)
+/**
+ * Flexible usage:
+ *  - gscTimeseriesClicks(token, siteUrl, start, end)
+ *  - gscTimeseriesClicks(req, res, siteUrl, start, end)
  */
-export async function gscTimeseriesClicks(
-  token: string,
-  siteUrl: string,
-  start: string,
-  end: string
-): Promise<{ rows: { date: string; clicks: number; impressions: number; ctr: number; position: number }[]; raw: any }>;
-export async function gscTimeseriesClicks(
-  req: NextApiRequest,
-  res: NextApiResponse,
-  siteUrl: string,
-  start: string,
-  end: string
-): Promise<{ rows: { date: string; clicks: number; impressions: number; ctr: number; position: number }[]; raw: any }>;
-export async function gscTimeseriesClicks(
-  a: string | NextApiRequest,
-  b: string | NextApiResponse | string,
-  c?: string,
-  d?: string,
-  e?: string
-) {
-  const token = isReqRes(a, b as any)
-    ? await getAccessToken(a as NextApiRequest, b as NextApiResponse)
-    : String(a);
+export async function gscTimeseriesClicks(...args: any[]): Promise<{
+  rows: { date: string; clicks: number; impressions: number; ctr: number; position: number }[];
+  raw: any;
+}> {
+  let token: string;
+  let siteUrl: string;
+  let start: string;
+  let end: string;
 
-  const siteUrl = isReqRes(a, b as any) ? String(c) : String(b);
-  const start = isReqRes(a, b as any) ? String(d) : String(c);
-  const end = isReqRes(a, b as any) ? String(e) : String(d);
+  if (isReqRes(args[0], args[1])) {
+    token = await getAccessToken(args[0] as NextApiRequest, args[1] as NextApiResponse);
+    siteUrl = String(args[2]);
+    start = String(args[3]);
+    end = String(args[4]);
+  } else {
+    token = String(args[0]);
+    siteUrl = String(args[1]);
+    start = String(args[2]);
+    end = String(args[3]);
+  }
 
   if (!siteUrl) throw new Error("siteUrl required");
   if (!start || !end) throw new Error("start and end required (YYYY-MM-DD)");
@@ -180,7 +165,7 @@ export async function gscTimeseriesClicks(
       rowLimit: 1000,
     }),
   });
-  const data = await parseJsonOrThrow(r);
+  const data: any = await forwardJsonOrText(r);
 
   const rows =
     data?.rows?.map((x: any) => ({
