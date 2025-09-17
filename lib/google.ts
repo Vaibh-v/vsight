@@ -42,9 +42,11 @@ function isReqRes(a: any, b: any): a is NextApiRequest {
   return a && typeof a === "object" && "headers" in a && b && typeof b === "object" && "status" in b;
 }
 
-/* ------------------------------------------------------------------ */
-/*                    GA Admin: list GA4 properties                    */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/*                     GOOGLE ANALYTICS (GA4)                          */
+/* ================================================================== */
+
+/** GA Admin: list GA4 properties visible to the user */
 export async function gaListProperties(...args: any[]): Promise<{
   properties: { name: string; propertyId: string; displayName?: string }[];
   raw: any;
@@ -70,11 +72,8 @@ export async function gaListProperties(...args: any[]): Promise<{
   return { properties, raw: data };
 }
 
-/* ------------------------------------------------------------------ */
-/*                          GA4 runReport API                          */
-/* ------------------------------------------------------------------ */
 /**
- * Flexible usage (single function, no TS overloads):
+ * GA4 runReport helper (flexible signatures):
  *  - gaRunReport(token, propertyId, body)
  *  - gaRunReport(token, propertyId, start, end)
  *  - gaRunReport(req, res, propertyId, body)
@@ -144,9 +143,11 @@ export async function gaRunReport(...args: any[]): Promise<{ rows: Record<string
   return { rows, raw: data };
 }
 
-/* ------------------------------------------------------------------ */
-/*                        GSC: list verified sites                     */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/*                    GOOGLE SEARCH CONSOLE (GSC)                      */
+/* ================================================================== */
+
+/** Return verified sites for the user */
 export async function gscSites(...args: any[]): Promise<{
   sites: { siteUrl: string; permissionLevel?: string; type?: string }[];
   raw: any;
@@ -169,9 +170,7 @@ export async function gscSites(...args: any[]): Promise<{
   return { sites, raw: data };
 }
 
-/* ------------------------------------------------------------------ */
-/*                   GSC daily clicks / impressions                    */
-/* ------------------------------------------------------------------ */
+/** Daily clicks/impressions time series */
 export async function gscTimeseriesClicks(...args: any[]): Promise<{
   rows: { date: string; clicks: number; impressions: number; ctr: number; position: number }[];
   raw: any;
@@ -224,24 +223,7 @@ export async function gscTimeseriesClicks(...args: any[]): Promise<{
   return { rows, raw: data };
 }
 
-/* ------------------------------------------------------------------ */
-/*                     GSC Top Queries (with filters)                  */
-/* ------------------------------------------------------------------ */
-/**
- * Flexible usage:
- *  - gscTopQueries(token, siteUrl, start, end, options?)
- *  - gscTopQueries(req, res, siteUrl, start, end, options?)
- *
- * options: {
- *   country?: string;         // ISO-3166 alpha-2 (e.g., "US", "IN")
- *   device?: "DESKTOP" | "MOBILE" | "TABLET";
- *   page?: string;            // filter by page URL
- *   queryContains?: string;   // substring match for query
- *   rowLimit?: number;        // default 100 (GSC UI default), max 25000
- * }
- *
- * Returns rows: { query, clicks, impressions, ctr, position }
- */
+/** Top queries list with optional filters */
 export async function gscTopQueries(...args: any[]): Promise<{
   rows: { query: string; clicks: number; impressions: number; ctr: number; position: number }[];
   raw: any;
@@ -282,7 +264,6 @@ export async function gscTopQueries(...args: any[]): Promise<{
     rowLimit: options.rowLimit ?? 100,
   };
 
-  // Build filters if provided
   const filters: any[] = [];
   if (options.country) {
     filters.push({ dimension: "country", operator: "equals", expression: options.country.toUpperCase() });
@@ -321,4 +302,133 @@ export async function gscTopQueries(...args: any[]): Promise<{
     })) ?? [];
 
   return { rows, raw: data };
+}
+
+/* ================================================================== */
+/*              GOOGLE DRIVE + GOOGLE SHEETS (for settings)           */
+/* ================================================================== */
+
+/**
+ * Find a spreadsheet by title in Drive; if missing, create it.
+ *
+ * Flexible usage:
+ *  - driveFindOrCreateSpreadsheet(token, title, options?)
+ *  - driveFindOrCreateSpreadsheet(req, res, title, options?)
+ *
+ * options?: { folderId?: string }
+ *
+ * Returns: { spreadsheetId, url, created: boolean, fileId }
+ */
+export async function driveFindOrCreateSpreadsheet(...args: any[]): Promise<{
+  spreadsheetId: string;
+  url: string;
+  created: boolean;
+  fileId: string;
+  raw?: any;
+}> {
+  let token: string;
+  let title: string;
+  let options: { folderId?: string } = {};
+
+  if (isReqRes(args[0], args[1])) {
+    token = await getAccessToken(args[0] as NextApiRequest, args[1] as NextApiResponse);
+    title = String(args[2]);
+    options = (args[3] ?? {}) as typeof options;
+  } else {
+    token = String(args[0]);
+    title = String(args[1]);
+    options = (args[2] ?? {}) as typeof options;
+  }
+
+  if (!title) throw new Error("title is required");
+
+  // 1) Search Drive for an existing spreadsheet with this title
+  const query =
+    `name='${title.replace(/'/g, "\\'")}'` +
+    ` and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`;
+
+  const searchUrl =
+    "https://www.googleapis.com/drive/v3/files" +
+    `?q=${encodeURIComponent(query)}` +
+    "&fields=files(id,name,webViewLink,parents)";
+  const sr = await fetch(searchUrl, { headers: { Authorization: `Bearer ${token}` } });
+  const sdata: any = await forwardJsonOrText(sr);
+
+  if (sdata?.files?.length) {
+    const f = sdata.files[0];
+    return {
+      spreadsheetId: f.id,
+      url: f.webViewLink || `https://docs.google.com/spreadsheets/d/${f.id}/edit`,
+      created: false,
+      fileId: f.id,
+      raw: sdata,
+    };
+  }
+
+  // 2) Create new spreadsheet via Sheets API
+  const createUrl = "https://sheets.googleapis.com/v4/spreadsheets";
+  const cr = await fetch(createUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ properties: { title } }),
+  });
+  const created: any = await forwardJsonOrText(cr);
+
+  let fileId = created?.spreadsheetId as string;
+  if (!fileId) throw new Error("Failed to create spreadsheet.");
+
+  // 3) If folderId provided, move file into that folder
+  if (options.folderId) {
+    const moveUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${encodeURIComponent(
+      options.folderId
+    )}&removeParents=root&fields=id,parents,webViewLink`;
+    const mr = await fetch(moveUrl, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+    await forwardJsonOrText(mr);
+  }
+
+  return {
+    spreadsheetId: fileId,
+    url: `https://docs.google.com/spreadsheets/d/${fileId}/edit`,
+    created: true,
+    fileId,
+    raw: created,
+  };
+}
+
+/**
+ * Read a range from a Google Sheet.
+ *
+ * Flexible usage:
+ *  - sheetsGet(token, spreadsheetId, rangeA1)
+ *  - sheetsGet(req, res, spreadsheetId, rangeA1)
+ *
+ * Returns: { values?: string[][], raw }
+ */
+export async function sheetsGet(...args: any[]): Promise<{ values?: string[][]; raw: any }> {
+  let token: string;
+  let spreadsheetId: string;
+  let rangeA1: string;
+
+  if (isReqRes(args[0], args[1])) {
+    token = await getAccessToken(args[0] as NextApiRequest, args[1] as NextApiResponse);
+    spreadsheetId = String(args[2]);
+    rangeA1 = String(args[3]);
+  } else {
+    token = String(args[0]);
+    spreadsheetId = String(args[1]);
+    rangeA1 = String(args[2]);
+  }
+
+  if (!spreadsheetId) throw new Error("spreadsheetId is required");
+  if (!rangeA1) throw new Error("rangeA1 is required");
+
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+    spreadsheetId
+  )}/values/${encodeURIComponent(rangeA1)}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const data: any = await forwardJsonOrText(r);
+  return { values: data?.values, raw: data };
 }
