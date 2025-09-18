@@ -1,66 +1,59 @@
+// pages/api/aggregations/default.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getToken } from "next-auth/jwt";
-import { gaRunReport, gscTimeseries, gscTopQueries } from "@/lib/google";
+import { gaRunReport, gscTimeseries } from "@/lib/google";
+
+type GaRow = { date: string; sessions: number; activeUsers: number };
+type GscRow = { date: string; clicks: number; impressions: number; ctr: number; position: number };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const token = await getToken({ req });
-    const accessToken = token?.accessToken as string | undefined;
-    if (!accessToken) return res.status(401).json({ error: "No Google token" });
+    const {
+      propertyId, // GA4 property id (optional)
+      siteUrl,    // GSC siteUrl (optional)
+      start,
+      end,
+    } = req.query as Record<string, string>;
 
-    const { propertyId, siteUrl, startDate, endDate } = req.method === "POST" ? req.body : req.query;
+    if (!start || !end) {
+      return res.status(400).json({ error: "start and end are required" });
+    }
 
     const wantGA = Boolean(propertyId);
     const wantGSC = Boolean(siteUrl);
 
-    const [gaSessions, gaUsers, gscSeries, gscTop] = await Promise.all([
+    const [ga, gsc] = await Promise.all([
       wantGA
-        ? gaRunReport(accessToken, String(propertyId), {
+        ? gaRunReport(req, String(propertyId), {
             dimensions: [{ name: "date" }],
-            metrics: [{ name: "sessions" }],
-            dateRanges: [{ startDate, endDate }],
+            metrics: [{ name: "sessions" }, { name: "activeUsers" }],
+            dateRanges: [{ startDate: String(start), endDate: String(end) }],
           })
         : null,
-      wantGA
-        ? gaRunReport(accessToken, String(propertyId), {
-            dimensions: [{ name: "date" }],
-            metrics: [{ name: "activeUsers" }],
-            dateRanges: [{ startDate, endDate }],
-          })
+      wantGSC
+        ? gscTimeseries({ req, siteUrl: String(siteUrl), start: String(start), end: String(end) })
         : null,
-      wantGSC ? gscTimeseries(accessToken, String(siteUrl), String(startDate), String(endDate)) : null,
-      wantGSC ? gscTopQueries(accessToken, String(siteUrl), {
-        startDate: String(startDate),
-        endDate: String(endDate),
-        dimension: "query",
-        rowLimit: 10,
-        sort: "clicks",
-        dir: "desc",
-      }) : null,
     ]);
 
-    // Normalize chart data
-    const gaLabels = gaSessions?.rows?.map((r: any) => r?.dimensionValues?.[0]?.value) ?? [];
-    const gaSessionsData = gaSessions?.rows?.map((r: any) => Number(r?.metricValues?.[0]?.value || 0)) ?? [];
-    const gaUsersData = gaUsers?.rows?.map((r: any) => Number(r?.metricValues?.[0]?.value || 0)) ?? [];
+    const gaRows: GaRow[] = Array.isArray(ga?.rows)
+      ? ga.rows.map((r: any) => ({
+          date: String(r.date),
+          sessions: Number(r.sessions ?? 0),
+          activeUsers: Number(r.activeUsers ?? 0),
+        }))
+      : [];
 
-    const response = {
-      ga4: wantGA ? {
-        labels: gaLabels,
-        sessions: gaSessionsData,
-        users: gaUsersData,
-        topPages: [], // (optional) add later
-      } : null,
-      gsc: wantGSC ? {
-        labels: gscSeries?.labels ?? [],
-        clicks: gscSeries?.clicks ?? [],
-        impressions: gscSeries?.impressions ?? [],
-        topQueries: (gscTop ?? []).slice(0, 10),
-      } : null,
-    };
+    const gscRows: GscRow[] = Array.isArray(gsc?.rows)
+      ? gsc.rows.map((r: any) => ({
+          date: String(r.date),
+          clicks: Number(r.clicks ?? 0),
+          impressions: Number(r.impressions ?? 0),
+          ctr: Number(r.ctr ?? 0),
+          position: Number(r.position ?? 0),
+        }))
+      : [];
 
-    res.status(200).json(response);
-  } catch (e: any) {
-    res.status(400).json({ error: e?.message || "Failed to run dashboard aggregation" });
+    res.status(200).json({ ga: gaRows, gsc: gscRows, raw: { ga: ga?.raw ?? null, gsc: gsc?.raw ?? null } });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Failed to run dashboard aggregation" });
   }
 }
