@@ -1,42 +1,46 @@
-// /pages/api/gsc/timeseries.ts
+// pages/api/gsc/timeseries.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getAccessToken, forwardJsonOrText } from "../../../lib/google";
+import { gscTimeseries } from "@/lib/google";
 
-// POST or GET: siteUrl, start, end
+type SeriesPoint = { date: string; clicks: number; impressions: number; ctr: number; position: number };
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const { siteUrl, start, end } =
-      req.method === "POST" ? req.body : req.query;
+    const {
+      siteUrl,
+      start,
+      end,
+      country,     // optional
+      device,      // optional
+      keywordMode, // optional
+      keyword,     // optional
+    } = req.query as Record<string, string>;
 
-    if (!siteUrl) return res.status(400).json({ error: "siteUrl required" });
-    if (!start || !end) return res.status(400).json({ error: "start and end required (YYYY-MM-DD)" });
+    if (!siteUrl || !start || !end) {
+      return res.status(400).json({ error: "siteUrl, start, end are required" });
+    }
 
-    const token = await getAccessToken(req, res);
-    const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
-      String(siteUrl)
-    )}/searchAnalytics/query`;
-
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        startDate: String(start),
-        endDate: String(end),
-        dimensions: ["date"],
-        rowLimit: 1000,
-      }),
+    const data = await gscTimeseries({
+      req,
+      siteUrl,
+      start,
+      end,
+      country: country || undefined,
+      device: device || undefined,
+      keywordMode: keywordMode || undefined,
+      keyword: keyword || undefined,
     });
 
-    const data = await forwardJsonOrText(r);
-    const rows =
-      (data as any).rows?.map((x: any) => ({
-        date: x.keys?.[0],
-        clicks: x.clicks ?? 0,
-        impressions: x.impressions ?? 0,
-      })) ?? [];
+    const rows: SeriesPoint[] = (data?.rows ?? []).map((r: any) => ({
+      date: String(r.date || r.day || ""),
+      clicks: Number(r.clicks ?? 0),
+      impressions: Number(r.impressions ?? 0),
+      ctr: Number(r.ctr ?? 0),
+      position: Number(r.position ?? 0),
+    }));
 
-    res.status(200).json({ rows });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message ?? "GSC timeseries failed" });
+    res.status(200).json({ rows, raw: data?.raw ?? null });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Failed to fetch timeseries" });
   }
 }
