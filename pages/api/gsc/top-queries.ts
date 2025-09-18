@@ -1,42 +1,53 @@
+// pages/api/gsc/top-queries.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getToken } from "next-auth/jwt";
 import { gscTopQueries } from "@/lib/google";
+
+type Row = { query: string; clicks: number; impressions: number; ctr: number; position: number };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const token = await getToken({ req });
-    const accessToken = token?.accessToken as string | undefined;
-    if (!accessToken) return res.status(401).json({ error: "No Google token" });
-
     const {
       siteUrl,
-      startDate, endDate,
-      dimension = "query",
+      start,
+      end,
+      country,           // optional
+      device,            // optional
+      keywordMode,       // "contains" | "equals" (optional)
+      keyword,           // optional
       rowLimit = 25,
-      country, device,
-      keywordMode, keyword,
-      sort = "clicks", dir = "desc"
-    } = (req.method === "POST" ? req.body : req.query) as any;
+      sortBy = "clicks", // "clicks" | "impressions" | "ctr" | "position"
+      sortDir = "desc",  // "asc" | "desc"
+    } = req.query as Record<string, string>;
 
-    if (!siteUrl || !startDate || !endDate) {
-      return res.status(400).json({ error: "siteUrl, startDate, endDate required" });
+    if (!siteUrl || !start || !end) {
+      return res.status(400).json({ error: "siteUrl, start, end are required" });
     }
 
-    const rows = await gscTopQueries(accessToken, String(siteUrl), {
-      startDate: String(startDate),
-      endDate: String(endDate),
-      dimension: String(dimension),
-      rowLimit: Number(rowLimit),
-      country: country ? String(country) : undefined,
-      device: device ? String(device) : undefined,
-      keywordMode: keywordMode ? String(keywordMode) : undefined,
-      keyword: keyword ? String(keyword) : undefined,
-      sort: String(sort),
-      dir: String(dir),
+    const data = await gscTopQueries({
+      req,
+      siteUrl,
+      start,
+      end,
+      rowLimit: Number(rowLimit) || 25,
+      country: country || undefined,
+      device: device || undefined,
+      keywordMode: keywordMode || undefined,
+      keyword: keyword || undefined,
+      sortBy: sortBy || "clicks",
+      sortDir: sortDir || "desc",
     });
 
-    res.status(200).json({ rows });
-  } catch (e: any) {
-    res.status(400).json({ error: e?.message || "Failed to fetch GSC queries" });
+    // Ensure a stable shape
+    const rows: Row[] = (data?.rows ?? []).map((r: any) => ({
+      query: r.query ?? "",
+      clicks: Number(r.clicks ?? 0),
+      impressions: Number(r.impressions ?? 0),
+      ctr: Number(r.ctr ?? 0),
+      position: Number(r.position ?? 0),
+    }));
+
+    res.status(200).json({ rows, raw: data?.raw ?? null });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Failed to fetch top queries" });
   }
 }
