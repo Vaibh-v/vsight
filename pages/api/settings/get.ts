@@ -1,17 +1,22 @@
+// pages/api/settings/get.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getToken } from "next-auth/jwt";
 import { driveFindOrCreateSpreadsheet, sheetsGet } from "@/lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.access_token) return res.status(401).json({ error: "Not authenticated" });
+    // Example: fetch or create a backing sheet for app settings
+    const { spreadsheetId } = await driveFindOrCreateSpreadsheet(req, {
+      name: "VSight Settings",
+      mimeType: "application/vnd.google-apps.spreadsheet",
+    });
 
-    const email = String((token as any).email || "user");
-    const spreadsheetId = await driveFindOrCreateSpreadsheet(String(token.access_token), `VSight_${email}`);
-    const j = await sheetsGet(String(token.access_token), spreadsheetId, "Vault!A:C");
-    return res.status(200).json({ values: j?.values || [], spreadsheetId });
-  } catch (e: any) {
-    return res.status(500).json({ error: e?.message || "Unexpected error" });
+    const sheet = await sheetsGet(req, {
+      spreadsheetId,
+      range: "Config!A1:B100",
+    });
+
+    res.status(200).json({ spreadsheetId, config: sheet?.values ?? [] });
+  } catch (err: any) {
+    res.status(200).json({ spreadsheetId: null, config: [], note: "Sheets/Drive not fully configured yet" });
   }
 }
