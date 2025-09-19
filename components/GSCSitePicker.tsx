@@ -1,66 +1,54 @@
-import * as React from "react";
+// components/GSCSitePicker.tsx
+"use client";
 
+import React from "react";
+
+type Option = { id: string; title: string };
 type Props = {
   value?: string;
-  onChange: (val: string) => void;
-  placeholder?: string;
+  onChange?: (v: string | undefined) => void;
+  disabled?: boolean;
+  className?: string;
 };
 
-type GscSite = { siteUrl: string; permissionLevel?: string };
-
-export default function GSCSitePicker({
-  value = "",
-  onChange,
-  placeholder = "Select a GSC property…",
-}: Props) {
-  const [sites, setSites] = React.useState<GscSite[]>([]);
+export default function GSCSitePicker({ value, onChange, disabled, className }: Props) {
   const [loading, setLoading] = React.useState(false);
+  const [opts, setOpts] = React.useState<Option[]>([]);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        setLoading(true);
+    let live = true;
+    setLoading(true);
+    fetch("/api/gsc/sites")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!live) return;
+        setOpts(data?.sites ?? []);
         setError(null);
-        const r = await fetch("/api/google/gsc/sites");
-        const j = await r.json();
-        if (!r.ok) throw new Error(j?.error || "Failed to load GSC sites");
-        if (mounted) setSites(Array.isArray(j) ? j : j?.siteEntry ?? []);
-      } catch (e: any) {
-        if (mounted) setError(e?.message || "Failed to load GSC sites");
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
+      })
+      .catch((e) => live && setError(e?.message || "Failed to load sites"))
+      .finally(() => live && setLoading(false));
     return () => {
-      mounted = false;
+      live = false;
     };
   }, []);
 
   return (
-    <div className="w-full">
+    <div className={className}>
       <select
-        className="w-full border rounded px-3 py-2 bg-white"
-        disabled={loading || !!error}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        className="w-full border rounded px-3 py-2"
+        disabled={disabled || loading || !!error}
+        value={value || ""}
+        onChange={(e) => onChange?.(e.target.value || undefined)}
       >
-        <option value="">{loading ? "Loading GSC sites…" : placeholder}</option>
-        {error ? (
-          <option value="" disabled>
-            {error}
+        <option value="">{loading ? "Loading..." : "Select Search Console property"}</option>
+        {opts.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.title}
           </option>
-        ) : (
-          sites
-            .sort((a, b) => a.siteUrl.localeCompare(b.siteUrl))
-            .map((s) => (
-              <option key={s.siteUrl} value={s.siteUrl}>
-                {s.siteUrl}
-              </option>
-            ))
-        )}
+        ))}
       </select>
+      {error && <div className="text-red-600 text-sm mt-1">{error}</div>}
     </div>
   );
 }
