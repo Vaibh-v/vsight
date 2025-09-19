@@ -2,26 +2,24 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { driveFindOrCreateSpreadsheet, sheetsAppend } from "@/lib/google";
 
+const SHEET_NAME = "VSight Settings";
+const RANGE = "Settings!A:Z";
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
+  if (req.method !== "POST") {
+    return res.status(405).json({ ok: false, error: { message: "Method not allowed" } });
+  }
   try {
-    const { rows } = req.body as { rows: (string | number)[][] };
-    const { spreadsheetId } = await driveFindOrCreateSpreadsheet(req, {
-      name: "VSight Settings",
-      mimeType: "application/vnd.google-apps.spreadsheet",
-    });
-
-    if (spreadsheetId && Array.isArray(rows) && rows.length) {
-      await sheetsAppend(req, {
-        spreadsheetId,
-        range: "Config!A1",
-        values: rows,
-      });
+    const values = (req.body?.values as any[][]) ?? null;
+    if (!Array.isArray(values) || !Array.isArray(values[0])) {
+      return res.status(400).json({ ok: false, error: { message: "`values` must be a 2D array" } });
     }
-
-    res.status(200).json({ ok: true, spreadsheetId });
+    const { fileId } = await driveFindOrCreateSpreadsheet(req, SHEET_NAME);
+    const { updates } = await sheetsAppend(req, fileId, RANGE, values);
+    res.status(200).json({ ok: true, fileId, updates });
   } catch (err: any) {
-    res.status(200).json({ ok: false, error: err?.message || "Sheets not configured; saved locally only" });
+    res
+      .status(err?.status ?? 500)
+      .json({ ok: false, error: { message: err?.message ?? "Failed to save settings", details: err?.details ?? null } });
   }
 }
