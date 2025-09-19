@@ -1,53 +1,76 @@
 // pages/api/ai/insights.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { gscTopQueries, gscTimeseries } from "@/lib/google";
+import { gscTimeseries, gscTopQueries } from "@/lib/google";
+
+function getNDaysAgo(n: number) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const { siteUrl, start, end } = req.query as Record<string, string>;
-    if (!siteUrl || !start || !end) {
-      return res.status(400).json({ error: "siteUrl, start, end are required" });
+    const {
+      siteUrl,
+      start = getNDaysAgo(28),
+      end = getNDaysAgo(1),
+      limit,
+    } = req.query as Record<string, string>;
+
+    if (!siteUrl) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: "Missing required query param: siteUrl" },
+      });
     }
 
+    const rowLimit = limit ? Number(limit) : 25;
+
+    // NOTE: lib/google.ts expects positional args (req, siteUrl, start, end[, rowLimit])
     const [ts, tq] = await Promise.all([
-      gscTimeseries({ req, siteUrl, start, end }),
-      gscTopQueries({ req, siteUrl, start, end, rowLimit: 25, sortBy: "clicks", sortDir: "desc" }),
+      gscTimeseries(req, String(siteUrl), String(start), String(end)),
+      gscTopQueries(req, String(siteUrl), String(start), String(end), rowLimit),
     ]);
 
-    const rows = (ts?.rows ?? []) as Array<{ date: string; clicks: number; impressions: number; ctr: number; position: number }>;
-    const queries = (tq?.rows ?? []) as Array<{ query: string; clicks: number; impressions: number; ctr: number; position: number }>;
+    // Lightweight, generic “insights” payload (no LLM call here to keep build green)
+    const series = ts.rows ?? [];
+    const top = tq.rows ?? [];
 
-    const insights: { type: string; text: string }[] = [];
-    if (rows.length >= 7) {
-      const recent = rows.slice(-7);
-      const first = recent[0];
-      const last = recent[recent.length - 1];
-      const deltaClicks = (last.clicks ?? 0) - (first.clicks ?? 0);
-      const pct = first.clicks ? (deltaClicks / first.clicks) * 100 : 0;
-      insights.push({
-        type: "Trend",
-        text: `Clicks ${pct >= 0 ? "up" : "down"} ${Math.abs(pct).toFixed(1)}% over the last 7 days.`,
-      });
-    }
+    // Basic computed summaries the UI can render immediately
+    const totalClicks = series.reduce((acc, r) => acc + (r.clicks || 0), 0);
+    const totalImpressions = series.reduce((acc, r) => acc + (r.impressions || 0), 0);
+    const avgCtr =
+      totalImpressions > 0 ? +(totalClicks / totalImpressions).toFixed(4) : 0;
 
-    if (queries.length) {
-      const winner = queries[0];
-      insights.push({
-        type: "Top Query",
-        text: `“${winner.query}” drives the most clicks (${winner.clicks}). Consider building supporting content.`,
-      });
+    const avgPosition =
+      series.length > 0
+        ? +(
+            series.reduce((acc, r) => acc + (r.position || 0), 0) / series.length
+          ).toFixed(2)
+        : 0;
 
-      const lowCTR = [...queries].sort((a, b) => a.ctr - b.ctr)[0];
-      if (lowCTR) {
-        insights.push({
-          type: "CTR Opportunity",
-          text: `Low CTR on “${lowCTR.query}” (${(lowCTR.ctr * 100).toFixed(1)}%). Optimize title/description.`,
-        });
-      }
-    }
-
-    res.status(200).json({ insights, raw: { timeseries: rows.length, queries: queries.length } });
+    res.status(200).json({
+      ok: true,
+      range: { start, end },
+      timeseries: series,
+      topQueries: top,
+      summary: {
+        totalClicks,
+        totalImpressions,
+        avgCtr,
+        avgPosition,
+      },
+      raw: { timeseries: ts.raw, topQueries: tq.raw },
+    });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message || "Failed to generate insights" });
+    res
+      .status(err?.status ?? 500)
+      .json({
+        ok: false,
+        error: {
+          message: err?.message ?? "Failed to build insights",
+          details: err?.details ?? null,
+        },
+      });
   }
 }
