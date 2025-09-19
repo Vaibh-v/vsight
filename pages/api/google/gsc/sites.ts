@@ -1,20 +1,15 @@
+// pages/api/google/gsc/sites.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { gscSites } from "@/lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const { sites } = await gscSites(req, res);
-    const rows = (sites ?? [])
-      .map((s: any) => ({
-        id: s?.siteUrl || s?.url || "",
-        title: s?.siteUrl || s?.url || "",
-      }))
-      .filter((x: any) => x.id);
-
-    res.status(200).json({ rows });
+    const { sites, raw } = await gscSites(req);
+    const rows = sites.map((s) => ({ id: s.siteUrl, title: s.siteUrl }));
+    res.status(200).json({ ok: true, rows, raw });
   } catch (err: any) {
-    res.status(500).json({
-      error: err?.message || "Failed to list Search Console sites",
-    });
+    res
+      .status(err?.status ?? 500)
+      .json({ ok: false, error: { message: err?.message ?? "Failed to list GSC sites", details: err?.details ?? null } });
   }
 }
