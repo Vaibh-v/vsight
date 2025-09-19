@@ -2,21 +2,17 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { driveFindOrCreateSpreadsheet, sheetsGet } from "@/lib/google";
 
+const SHEET_NAME = "VSight Settings";
+const RANGE = "Settings!A:Z";
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    // Example: fetch or create a backing sheet for app settings
-    const { spreadsheetId } = await driveFindOrCreateSpreadsheet(req, {
-      name: "VSight Settings",
-      mimeType: "application/vnd.google-apps.spreadsheet",
-    });
-
-    const sheet = await sheetsGet(req, {
-      spreadsheetId,
-      range: "Config!A1:B100",
-    });
-
-    res.status(200).json({ spreadsheetId, config: sheet?.values ?? [] });
+    const { fileId } = await driveFindOrCreateSpreadsheet(req, SHEET_NAME);
+    const { values } = await sheetsGet(req, fileId, RANGE);
+    res.status(200).json({ ok: true, fileId, values });
   } catch (err: any) {
-    res.status(200).json({ spreadsheetId: null, config: [], note: "Sheets/Drive not fully configured yet" });
+    res
+      .status(err?.status ?? 500)
+      .json({ ok: false, error: { message: err?.message ?? "Failed to load settings", details: err?.details ?? null } });
   }
 }
