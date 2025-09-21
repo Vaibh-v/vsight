@@ -1,5 +1,3 @@
-// components/ChartKit.tsx
-import React from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -10,120 +8,61 @@ import {
   Tooltip,
   Legend,
   Filler,
-  TimeScale,
+  TimeScale
 } from "chart.js";
 import { Line, Bar } from "react-chartjs-2";
+import React from "react";
 
 ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Tooltip,
-  Legend,
-  Filler,
-  TimeScale
+  CategoryScale, LinearScale, PointElement, LineElement, BarElement,
+  Tooltip, Legend, Filler, TimeScale
 );
 
-export type LineProps = {
+type LineProps = {
   labels: string[];
-  data: number[];
-  height?: number;
-  title?: string;
+  series: { label: string; data: number[] }[];
 };
 
-export type BarProps = {
-  labels: string[];
-  data: number[];
-  height?: number;
-  title?: string;
-};
+type BarProps = LineProps;
 
-const baseGrid = {
-  color: "rgba(0,0,0,0.05)",
-  drawBorder: false,
-};
-
-const baseTicks = {
-  color: "#666",
-  maxTicksLimit: 8,
-};
-
-export function LineChartMini({ labels, data, height = 220, title }: LineProps) {
-  const datasetColor = "rgba(59,130,246,1)";
-  const datasetBg = "rgba(59,130,246,0.12)";
-
-  const chartData = {
+export function LineChartMini({ labels, series }: LineProps) {
+  const data = {
     labels,
-    datasets: [
-      {
-        label: title ?? "Series",
-        data,
-        borderColor: datasetColor,
-        backgroundColor: datasetBg,
-        tension: 0.35,
-        pointRadius: 0,
-        fill: true,
-      },
-    ],
+    datasets: series.map((s, i) => ({
+      label: s.label,
+      data: s.data,
+      tension: 0.3,
+      fill: false,
+      borderWidth: 2,
+      pointRadius: 0
+    }))
   };
-
-  const options: any = {
+  const options = {
     responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { display: !!title, position: "top" as const },
-      tooltip: { mode: "index" as const, intersect: false },
-    },
-    scales: {
-      x: { grid: baseGrid, ticks: baseTicks },
-      y: { grid: baseGrid, ticks: baseTicks, beginAtZero: true },
-    },
+    plugins: { legend: { display: false } },
+    scales: { x: { display: true }, y: { display: true } }
   };
-
-  return (
-    <div style={{ height }}>
-      <Line data={chartData} options={options} />
-    </div>
-  );
+  return <Line data={data} options={options as any} />;
 }
 
-export function BarChartMini({ labels, data, height = 220, title }: BarProps) {
-  const barColor = "rgba(16,185,129,1)";
-  const barBg = "rgba(16,185,129,0.18)";
+// Backwards-compatible exports (some pages import these names)
+export const LineChartModern = LineChartMini;
 
-  const chartData = {
+export function BarChartMini({ labels, series }: BarProps) {
+  const data = {
     labels,
-    datasets: [
-      {
-        label: title ?? "Series",
-        data,
-        backgroundColor: barBg,
-        borderColor: barColor,
-        borderWidth: 1,
-        barPercentage: 0.7,
-        categoryPercentage: 0.7,
-      },
-    ],
+    datasets: series.map((s) => ({
+      label: s.label,
+      data: s.data,
+      borderWidth: 1
+    }))
   };
-
-  const options: any = {
+  const options = {
     responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { display: !!title, position: "top" as const },
-      tooltip: { mode: "index" as const, intersect: false },
-    },
-    scales: {
-      x: { grid: baseGrid, ticks: baseTicks },
-      y: { grid: baseGrid, ticks: baseTicks, beginAtZero: true },
-    },
+    plugins: { legend: { display: false } },
+    scales: { x: { display: true }, y: { display: true } }
   };
-
-  return (
-    <div style={{ height }}>
-      <Bar data={chartData} options={options} />
-    </div>
-  );
+  return <Bar data={data} options={options as any} />;
 }
+
+export const BarChartModern = BarChartMini;
