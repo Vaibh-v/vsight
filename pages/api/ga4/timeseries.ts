@@ -1,35 +1,26 @@
-// pages/api/ga4/timeseries.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { gaRunReport } from "@/lib/google";
+import { forwardJsonOrText, getAccessToken } from "@/lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const { propertyId, start, end, metric = "sessions" } = req.query;
+    const token = await getAccessToken(req);
+    const { propertyId, start, end } = req.query;
+    if (!propertyId || !start || !end) return res.status(400).json({ error: "Missing propertyId/start/end" });
 
-    if (!propertyId || !start || !end) {
-      return res.status(400).json({ error: "Missing propertyId/start/end" });
-    }
-
-    const report: any = await gaRunReport(
-      req,
-      String(propertyId),
-      {
-        dimensions: [{ name: "date" }],
-        metrics: [{ name: String(metric) }],
-        dateRanges: [{ startDate: String(start), endDate: String(end) }],
-      }
-    );
-
-    const rows =
-      report?.rows?.map((r: any) => ({
-        date: r?.dimensionValues?.[0]?.value ?? "",
-        value: Number(r?.metricValues?.[0]?.value ?? 0),
-      })) ?? [];
-
-    return res.status(200).json({ rows });
+    const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
+    const body = {
+      dimensions: [{ name: "date" }],
+      metrics: [{ name: "sessions" }, { name: "activeUsers" }],
+      dateRanges: [{ startDate: String(start), endDate: String(end) }]
+    };
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await forwardJsonOrText(r);
+    res.status(200).json(data);
   } catch (e: any) {
-    return res
-      .status(e?.status ?? 500)
-      .json({ error: e?.message ?? "GA4 timeseries failed" });
+    res.status(400).json({ error: e?.message || "GA4 timeseries failed" });
   }
 }
