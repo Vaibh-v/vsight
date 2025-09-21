@@ -1,14 +1,15 @@
-// pages/api/ga/properties.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { gaListProperties } from "@/lib/google";
+import { getToken } from "next-auth/jwt";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const properties = await gaListProperties(req); // expects the req, not a token
-    res.status(200).json({ properties });
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+    const accessToken = (token as any)?.access_token as string | undefined;
+    if (!accessToken) return res.status(401).json({ error: "No Google token" });
+    const props = await gaListProperties(accessToken);
+    res.status(200).json({ properties: props });
   } catch (e: any) {
-    res
-      .status(e?.status ?? 400)
-      .json({ error: e?.message ?? "Failed to list GA4 properties" });
+    res.status(400).json({ error: e?.message || "Failed to list GA4 properties" });
   }
 }
