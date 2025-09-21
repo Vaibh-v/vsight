@@ -1,91 +1,28 @@
-// /pages/api/gsc/insight.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { gscTimeseries, gscTopQueries } from "@/lib/google";
-
-type GscRow = {
-  date: string;
-  clicks: number;
-  impressions: number;
-  ctr: number;
-  position: number;
-};
-
-type QueryRow = {
-  query: string;
-  clicks: number;
-  impressions: number;
-  ctr: number;
-  position: number;
-};
-
-function pct(a: number, b: number) {
-  if (!b) return 0;
-  return ((a - b) / b) * 100;
-}
+import { forwardJsonOrText, gscTimeseries, gscTopQueries } from "@/lib/google";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
   try {
-    const {
-      siteUrl,
-      start,
-      end,
-      rowLimit = 25,
-      sortBy = "clicks",
-      sortDir = "desc",
-    } = (req.body || {}) as {
-      siteUrl: string;
-      start: string;
-      end: string;
-      rowLimit?: number;
-      sortBy?: "clicks" | "impressions" | "ctr" | "position";
-      sortDir?: "asc" | "desc";
-    };
-
-    if (!siteUrl || !start || !end) {
-      return res.status(400).json({ error: "Missing siteUrl/start/end" });
-    }
+    const isPost = req.method === "POST";
+    const payload = isPost ? req.body || {} : req.query;
+    const siteUrl = String(payload.siteUrl || "");
+    const start = String(payload.start || "");
+    const end = String(payload.end || "");
+    if (!siteUrl || !start || !end) return res.status(400).json({ error: "Missing siteUrl/start/end" });
 
     const [ts, tq] = await Promise.all([
-      gscTimeseries(req, String(siteUrl), String(start), String(end)),
-      gscTopQueries(
-        req,
-        String(siteUrl),
-        String(start),
-        String(end),
-        Number(rowLimit) || 25,
-        String(sortBy) as "clicks" | "impressions" | "ctr" | "position",
-        String(sortDir) as "asc" | "desc"
-      ),
+      gscTimeseries(req, siteUrl, start, end),
+      gscTopQueries(req, siteUrl, start, end, { rowLimit: 25, sortBy: "clicks", sortDir: "desc" })
     ]);
 
-    const rows = (ts?.rows || []) as GscRow[];
-    const queries = (tq?.rows || []) as QueryRow[];
+    // naive LLM prompt – replace later with your own model/gateway
+    const prompt = `You are an SEO analyst. Using the daily trends and top queries below, write 3-5 bullet insights.
+Timeseries: ${JSON.stringify(ts.rows.slice(-14))}
+TopQueries: ${JSON.stringify(tq.rows.slice(0, 10))}`;
 
-    // Minimal computed summary (kept here to avoid frontend duplication)
-    let summary = "";
-    if (rows.length > 1) {
-      const first = rows[0];
-      const last = rows[rows.length - 1];
-      const clickChange = pct(last.clicks, first.clicks);
-      const impChange = pct(last.impressions, first.impressions);
-      summary = `Clicks ${clickChange >= 0 ? "up" : "down"} ${Math.abs(clickChange).toFixed(
-        1
-      )}%, impressions ${impChange >= 0 ? "up" : "down"} ${Math.abs(impChange).toFixed(1)}% from ${
-        first.date
-      } to ${last.date}.`;
-    }
-
-    return res.status(200).json({
-      siteUrl,
-      start,
-      end,
-      timeseries: rows,
-      topQueries: queries,
-      summary,
-    });
+    // For now just echo the prompt back as "insight" placeholder
+    res.status(200).json({ insights: [`(placeholder) ${prompt.slice(0, 400)}...`] });
   } catch (e: any) {
-    return res.status(400).json({ error: e?.message || "Failed to fetch GSC insight" });
+    res.status(400).json({ error: e?.message || "GSC insight failed" });
   }
 }
