@@ -1,41 +1,118 @@
+// pages/api/insights/generate.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getToken } from "next-auth/jwt";
 import { gscTopQueries } from "@/lib/google";
 
+type SortBy = "clicks" | "impressions" | "ctr" | "position";
+type SortDir = "asc" | "desc";
+
+type QueryRow = {
+  key: string;            // usually the query string
+  clicks: number;
+  impressions: number;
+  ctr: number;            // 0..1
+  position: number;
+};
+
+/**
+ * Build "movers" insight by comparing two periods of GSC query data.
+ *
+ * Query params:
+ *  - siteUrl (required)
+ *  - start (current period start, required)
+ *  - end (current period end, required)
+ *  - prevStart (previous period start, optional; if omitted, uses same-length period before {start})
+ *  - prevEnd (previous period end, optional; if omitted, uses day before {start})
+ *  - limit (optional, default 250)
+ *  - sortBy (optional: clicks|impressions|ctr|position, default "clicks")
+ *  - sortDir (optional: asc|desc, default "desc")
+ *  - moversLimit (optional, default 25)
+ */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const token = await getToken({ req });
-    const accessToken = token?.accessToken as string | undefined;
-    if (!accessToken) return res.status(401).json({ error: "No Google token" });
+    const {
+      siteUrl,
+      start,
+      end,
+      prevStart,
+      prevEnd,
+      limit,
+      sortBy,
+      sortDir,
+      moversLimit,
+    } = req.query;
 
-    const { siteUrl, startDate, endDate } = req.method === "POST" ? req.body : req.query;
-    if (!siteUrl || !startDate || !endDate) return res.status(400).json({ error: "siteUrl, startDate, endDate required" });
+    if (!siteUrl || !start || !end) {
+      return res.status(400).json({ ok: false, error: "Missing siteUrl/start/end" });
+    }
 
-    // Current: top movers by click delta vs previous equal window
-    const ms = (d: string) => new Date(d + "T00:00:00Z").getTime();
-    const spanDays = Math.ceil((ms(String(endDate)) - ms(String(startDate))) / 86400000);
-    const prevStart = new Date(ms(String(startDate)) - spanDays * 86400000).toISOString().slice(0,10);
-    const prevEnd   = new Date(ms(String(endDate))   - spanDays * 86400000).toISOString().slice(0,10);
+    // Coerce options with sane defaults
+    const rowLimit = limit ? Number(limit) : 250;
+    const sortBySafe = (String(sortBy || "clicks") as SortBy);
+    const sortDirSafe = (String(sortDir || "desc") as SortDir);
+    const moversOut = moversLimit ? Number(moversLimit) : 25;
 
-    const [curr, prev] = await Promise.all([
-      gscTopQueries(accessToken, String(siteUrl), { startDate: String(startDate), endDate: String(endDate), dimension: "query", rowLimit: 50 }),
-      gscTopQueries(accessToken, String(siteUrl), { startDate: prevStart, endDate: prevEnd, dimension: "query", rowLimit: 50 }),
+    // If prevStart/prevEnd aren’t provided, derive a same-length previous window.
+    const [currStartDate, currEndDate] = [new Date(String(start)), new Date(String(end))];
+    const msInDay = 24 * 60 * 60 * 1000;
+    const currDays = Math.max(1, Math.round((+currEndDate - +currStartDate) / msInDay) + 1);
+
+    let prevStartStr = String(prevStart || "");
+    let prevEndStr = String(prevEnd || "");
+    if (!prevStartStr || !prevEndStr) {
+      const prevEndDate = new Date(+currStartDate - msInDay);
+      const prevStartDate = new Date(+prevEndDate - (currDays - 1) * msInDay);
+      prevStartStr = prevStartDate.toISOString().slice(0, 10);
+      prevEndStr = prevEndDate.toISOString().slice(0, 10);
+    }
+
+    // Fetch both periods in parallel; NOTE: gscTopQueries returns { rows } now.
+    const [{ rows: prevRows }, { rows: currRows }] = await Promise.all([
+      gscTopQueries(req, String(siteUrl), prevStartStr, prevEndStr, {
+        rowLimit,
+        sortBy: sortBySafe,
+        sortDir: sortDirSafe,
+      }),
+      gscTopQueries(req, String(siteUrl), String(start), String(end), {
+        rowLimit,
+        sortBy: sortBySafe,
+        sortDir: sortDirSafe,
+      }),
     ]);
 
-    const prevMap = new Map(prev.map((r: any) => [r.key, r.clicks]));
-    const movers = curr
-      .map((r: any) => ({ ...r, deltaClicks: (r.clicks ?? 0) - (prevMap.get(r.key) ?? 0) }))
-      .sort((a: any, b: any) => Math.abs(b.deltaClicks) - Math.abs(a.deltaClicks))
-      .slice(0, 10);
+    // Build quick lookup for previous metrics
+    const prevMap = new Map<string, number>(
+      (prevRows as QueryRow[]).map((r) => [r.key, r.clicks ?? 0])
+    );
 
-    const sum = (arr: number[]) => arr.reduce((a,b) => a+b, 0);
-    const upDown = (sum(curr.map((x: any) => x.clicks))-sum(prev.map((x: any) => x.clicks)));
-    const highlights = [
-      `${upDown >= 0 ? "Clicks up" : "Clicks down"} ${Math.abs(upDown)} vs previous period.`,
-    ];
+    // Compute movers by delta in clicks (absolute magnitude)
+    const movers = (currRows as QueryRow[])
+      .map((r) => ({
+        ...r,
+        deltaClicks: (r.clicks ?? 0) - (prevMap.get(r.key) ?? 0),
+      }))
+      .sort((a, b) => Math.abs(b.deltaClicks) - Math.abs(a.deltaClicks))
+      .slice(0, moversOut);
 
-    res.status(200).json({ highlights, movers });
-  } catch (e: any) {
-    res.status(400).json({ error: e?.message || "Failed to generate insights" });
+    return res.status(200).json({
+      ok: true,
+      window: { start: String(start), end: String(end), prevStart: prevStartStr, prevEnd: prevEndStr },
+      totals: {
+        current: {
+          clicks: sumBy(currRows as QueryRow[], "clicks"),
+          impressions: sumBy(currRows as QueryRow[], "impressions"),
+        },
+        previous: {
+          clicks: sumBy(prevRows as QueryRow[], "clicks"),
+          impressions: sumBy(prevRows as QueryRow[], "impressions"),
+        },
+      },
+      movers,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || "Failed to generate insights" });
   }
+}
+
+function sumBy<T extends Record<string, any>>(rows: T[], key: keyof T) {
+  return rows.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
 }
