@@ -1,222 +1,176 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+// components/state/AppStateProvider.tsx
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
-export type DateRange = { start: string; end: string };
-export type Region = { country: string; state?: string };
-export type GBPSelection = { name: string; title?: string } | null;
-
-export type Selections = {
-  ga4PropertyId?: string;
-  gscSiteUrl?: string;
-  gbpLocation?: GBPSelection;
-  dateRange?: DateRange;
-  region?: Region; // canonical country/state holder
+/**
+ * Types
+ */
+export type Region = {
+  /** ISO 3166-1 alpha-2 (e.g., "US"). Required at the type level. */
+  country: string;
+  /** Optional state/region code (e.g., "CA"). */
+  state?: string | null;
 };
 
-// ---- Legacy shape expected by older components ----
-// They previously did: const { state, setState } = useAppState()
-type LegacyState = {
-  // Dates (old code sometimes uses startDate/endDate and/or datePreset)
-  startDate?: string;
-  endDate?: string;
-  datePreset?: string;
+export type DateRange = {
+  start: string; // YYYY-MM-DD
+  end: string;   // YYYY-MM-DD
+};
 
-  // Country/state were flat before; now they live under region
-  country?: string;
-  state?: string;
-
-  // Some components might directly stash IDs here; keep passthrough
-  ga4PropertyId?: string;
-  gscSiteUrl?: string;
-
-  // Allow anything else for safety
+export type Selections = {
+  /** GA4 propertyId, if connected/selected */
+  propertyId?: string;
+  /** GSC site URL, if connected/selected */
+  siteUrl?: string;
+  /** Active region selection (country required in type) */
+  region: Region;
+  /** Active date range */
+  dateRange?: DateRange;
+  /** Any additional keys you extend later (integrations, filters, etc.) */
   [key: string]: any;
 };
 
-// The context type we expose
-type Ctx = {
-  // New API (canonical)
-  ga4PropertyId?: string;
-  gscSiteUrl?: string;
-  gbpLocation?: GBPSelection;
-  dateRange?: DateRange | null;
-  region?: Region | null;
-  setSelections: (patch: Partial<Selections> | any) => void;
-
-  // Legacy API (shim)
-  state: LegacyState;
-  setState: (patch: Partial<LegacyState>) => void;
+type AppState = {
+  selections: Selections;
+  setSelections: React.Dispatch<React.SetStateAction<Selections>>;
+  /** Merge-style updater accepted across the app */
+  updateSelections: (patch: Partial<Selections>) => void;
+  /** Reset to defaults */
+  resetSelections: () => void;
 };
 
-const AppStateContext = createContext<Ctx | null>(null);
+/**
+ * Storage keys/utilities
+ */
+const STORAGE_KEY = "vsight:selections";
 
-const LS_KEY = "vsight.selections.v1";
-
-/** Normalize possible {startDate,endDate} into {start,end}. */
-function normalizeDateRange(dr: any | undefined): DateRange | undefined {
-  if (!dr) return undefined;
-  if (typeof dr !== "object") return undefined;
-  const hasStartEnd = "start" in dr || "end" in dr;
-  const hasStartDateEndDate = "startDate" in dr || "endDate" in dr;
-
-  if (hasStartEnd) {
-    return {
-      start: String(dr.start ?? ""),
-      end: String(dr.end ?? ""),
-    };
-  }
-  if (hasStartDateEndDate) {
-    return {
-      start: String(dr.startDate ?? ""),
-      end: String(dr.endDate ?? ""),
-    };
-  }
-  return undefined;
-}
-
-// ---------- Storage helpers ----------
-function loadFromStorage(): Selections {
-  if (typeof window === "undefined") return {};
+function loadFromStorage(): Selections | null {
+  if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(LS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as any;
-
-    // Normalize any legacy dateRange shape on load
-    if (parsed?.dateRange) {
-      const nr = normalizeDateRange(parsed.dateRange);
-      if (nr) parsed.dateRange = nr;
-      else delete parsed.dateRange;
-    }
-
-    return (parsed && typeof parsed === "object" ? parsed : {}) as Selections;
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
-function saveToStorage(sel: Selections) {
+function saveToStorage(next: Selections) {
+  if (typeof window === "undefined") return;
   try {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(LS_KEY, JSON.stringify(sel));
-    }
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
-    // ignore
+    // ignore storage errors (private mode, quota, etc.)
   }
 }
 
-// ---------- Provider ----------
+/**
+ * Defaults
+ */
+const DEFAULT_SELECTIONS: Selections = {
+  region: {
+    country: "", // required by type; default empty string
+    state: undefined,
+  },
+  dateRange: undefined,
+  propertyId: undefined,
+  siteUrl: undefined,
+};
+
+/**
+ * Context
+ */
+const AppStateContext = createContext<AppState | undefined>(undefined);
+
+/**
+ * Provider
+ */
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
-  // canonical selections (new API)
-  const [sel, setSel] = useState<Selections>({
-    region: { country: "USA" }, // default country
+  const [selections, setSelections] = useState<Selections>(() => {
+    return loadFromStorage() ?? DEFAULT_SELECTIONS;
   });
 
-  // hydrate once on client
+  // Persist on change
   useEffect(() => {
-    const initial = loadFromStorage();
-    setSel((prev) => ({
-      region: { country: "USA", ...(prev.region || {}), ...(initial.region || {}) },
-      ...prev,
-      ...initial,
-    }));
+    saveToStorage(selections);
+  }, [selections]);
+
+  /**
+   * Merge-style updater that guarantees Region’s type shape.
+   * - If the patch contains region-like keys (country/state), we build Region explicitly.
+   * - Otherwise we keep existing region.
+   * - Everything else merges shallowly.
+   */
+  const updateSelections = useCallback((patch: Partial<Selections>) => {
+    setSelections((prev) => {
+      // Pull potential region fields from the incoming patch (support both `region: { ... }`
+      // and top-level `country`/`state` if your UI patches that way).
+      const incomingRegionObj =
+        (patch.region && typeof patch.region === "object" ? patch.region : undefined) as
+          | Partial<Region>
+          | undefined;
+
+      const hasTopLevelCountry = Object.prototype.hasOwnProperty.call(patch, "country");
+      const hasTopLevelState = Object.prototype.hasOwnProperty.call(patch, "state");
+
+      const nextRegion: Region = {
+        country:
+          (incomingRegionObj?.country ??
+            // @ts-ignore allow reading accidental top-level values if present in some callers
+            (hasTopLevelCountry ? (patch as any).country : undefined) ??
+            prev.region?.country ??
+            ""),
+        state:
+          incomingRegionObj?.state ??
+          // @ts-ignore see note above
+          (hasTopLevelState ? (patch as any).state : prev.region?.state),
+      };
+
+      // Build the final object: start with prev, shallow-merge patch,
+      // then force our well-typed region to avoid optional-country errors.
+      const next: Selections = {
+        ...prev,
+        ...patch,
+        region: nextRegion,
+      };
+
+      saveToStorage(next);
+      return next;
+    });
   }, []);
 
-  // canonical setter (accepts either {start,end} or {startDate,endDate})
-  const setSelections = (patch: Partial<Selections> | any) => {
-    // Normalize incoming dateRange if it uses legacy keys
-    let normalizedPatch: Partial<Selections> = { ...patch };
-    if (patch?.dateRange) {
-      const nr = normalizeDateRange(patch.dateRange);
-      if (nr) normalizedPatch.dateRange = nr;
-      else delete (normalizedPatch as any).dateRange; // avoid bad shapes
-    }
+  const resetSelections = useCallback(() => {
+    setSelections(DEFAULT_SELECTIONS);
+    saveToStorage(DEFAULT_SELECTIONS);
+  }, []);
 
-    setSel((prev) => {
-      const nextRegion =
-        normalizedPatch.region !== undefined
-          ? { ...(prev.region || {}), ...(normalizedPatch.region || {}) }
-          : prev.region;
-
-      const next: Selections = { ...prev, ...normalizedPatch, region: nextRegion };
-      saveToStorage(next);
-      return next;
-    });
-  };
-
-  // ---------- Legacy adapter ----------
-  // Derive a legacy-style object from canonical selections so old components keep working.
-  const legacyState: LegacyState = useMemo(() => {
-    const startDate = sel.dateRange?.start;
-    const endDate = sel.dateRange?.end;
-    const country = sel.region?.country;
-    const st = sel.region?.state;
-
-    return {
-      startDate,
-      endDate,
-      // We don’t attempt to re-derive which named preset was used; old code can keep a label if needed.
-      datePreset: undefined,
-      country,
-      state: st,
-      ga4PropertyId: sel.ga4PropertyId,
-      gscSiteUrl: sel.gscSiteUrl,
-    };
-  }, [sel]);
-
-  // Translate legacy patches into canonical selections.
-  const setState = (patch: Partial<LegacyState>) => {
-    setSel((prev) => {
-      let next: Selections = { ...prev };
-
-      // Date handling (legacy keys)
-      const nextStart = patch.startDate ?? prev.dateRange?.start;
-      const nextEnd = patch.endDate ?? prev.dateRange?.end;
-      if (nextStart || nextEnd) {
-        next.dateRange = {
-          start: nextStart || prev.dateRange?.start || "",
-          end: nextEnd || prev.dateRange?.end || "",
-        };
-      }
-
-      // Country/state handling
-      if (patch.country !== undefined || patch.state !== undefined) {
-        next.region = {
-          country: patch.country ?? prev.region?.country ?? "USA",
-          state: patch.state ?? prev.region?.state,
-        };
-      }
-
-      // Direct IDs (pass-through)
-      if (patch.ga4PropertyId !== undefined) next.ga4PropertyId = patch.ga4PropertyId;
-      if (patch.gscSiteUrl !== undefined) next.gscSiteUrl = patch.gscSiteUrl;
-
-      saveToStorage(next);
-      return next;
-    });
-  };
-
-  const value: Ctx = useMemo(
+  const value = useMemo<AppState>(
     () => ({
-      // new API
-      ga4PropertyId: sel.ga4PropertyId,
-      gscSiteUrl: sel.gscSiteUrl,
-      gbpLocation: sel.gbpLocation ?? null,
-      dateRange: sel.dateRange ?? null,
-      region: sel.region ?? null,
+      selections,
       setSelections,
-
-      // legacy API (shim)
-      state: legacyState,
-      setState,
+      updateSelections,
+      resetSelections,
     }),
-    [sel, legacyState]
+    [selections, updateSelections, resetSelections]
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }
 
-export function useAppState(): Ctx {
+/**
+ * Hook
+ */
+export function useAppState(): AppState {
   const ctx = useContext(AppStateContext);
-  if (!ctx) throw new Error("useAppState must be used within <AppStateProvider>");
+  if (!ctx) {
+    throw new Error("useAppState must be used within <AppStateProvider>");
+  }
   return ctx;
 }
