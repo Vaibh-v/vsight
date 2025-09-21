@@ -59,9 +59,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         String(siteUrl),
         String(start),
         String(end),
-        Number(rowLimit) || 25,
-        String(sortBy) as "clicks" | "impressions" | "ctr" | "position",
-        String(sortDir) as "asc" | "desc"
+        {
+          rowLimit: Number(rowLimit) || 25,
+          sortBy: String(sortBy) as "clicks" | "impressions" | "ctr" | "position",
+          sortDir: String(sortDir) as "asc" | "desc",
+        }
       ),
     ]);
 
