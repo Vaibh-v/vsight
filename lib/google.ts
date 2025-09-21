@@ -1,5 +1,74 @@
 import type { NextApiRequest } from "next";
 import { getToken } from "next-auth/jwt";
+// --- ADD BELOW to lib/google.ts ---
+
+import type { NextApiRequest } from "next";
+import { google } from "googleapis";
+import { getToken } from "next-auth/jwt";
+
+/** Reuse a single helper to build an OAuth2 client using the user's NextAuth token. */
+async function getGoogleClient(req: NextApiRequest) {
+  const token = await getToken({ req });
+  const accessToken = (token?.accessToken || token?.access_token) as string | undefined;
+  if (!accessToken) {
+    throw new Error("No Google access token found. Sign in with Google again.");
+  }
+  // Use OAuth2Client without clientId/secret for token-forwarding
+  const auth = new google.auth.OAuth2();
+  auth.setCredentials({ access_token: accessToken });
+  return auth;
+}
+
+/**
+ * Find a spreadsheet by exact name, create if missing, and return its ID.
+ * Requires Drive scope (drive.file or drive).
+ */
+export async function driveFindOrCreateSpreadsheet(req: NextApiRequest, name: string): Promise<string> {
+  const auth = await getGoogleClient(req);
+  const drive = google.drive({ version: "v3", auth });
+
+  // Try to find by name (not guaranteed unique, we take the first)
+  const list = await drive.files.list({
+    q: `mimeType='application/vnd.google-apps.spreadsheet' and name='${name.replace(/'/g, "\\'")}' and trashed=false`,
+    fields: "files(id,name)",
+    pageSize: 1,
+    spaces: "drive",
+  });
+
+  const existing = list.data.files?.[0];
+  if (existing?.id) return existing.id;
+
+  // Create a new spreadsheet file
+  const created = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.spreadsheet",
+    },
+    fields: "id",
+  });
+
+  const spreadsheetId = created.data.id;
+  if (!spreadsheetId) throw new Error("Failed to create spreadsheet");
+  return spreadsheetId;
+}
+
+/**
+ * Read values from a spreadsheet range.
+ * Requires Sheets scope (spreadsheets.readonly or spreadsheets).
+ */
+export async function sheetsGet(
+  req: NextApiRequest,
+  spreadsheetId: string,
+  range: string
+): Promise<any[][]> {
+  const auth = await getGoogleClient(req);
+  const sheets = google.sheets({ version: "v4", auth });
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range,
+  });
+  return (resp.data.values as any[][]) || [];
+}
 
 /** ---------- Shared helpers ---------- */
 
