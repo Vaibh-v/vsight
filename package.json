@@ -18,12 +18,13 @@
     "googleapis": "^131.0.0",
     "google-auth-library": "^9.14.2",
     "chart.js": "^4.4.4",
-    "react-chartjs-2": "^5.2.0"
+    "react-chartjs-2": "^5.2.0",
+    "next-auth": "^4.24.7"
   },
   "overrides": {
     "react": "18.2.0",
     "react-dom": "18.2.0"
-  },
+  }
   "devDependencies": {
     "typescript": "^5.4.0",
     "@types/react": "^18.2.48",
