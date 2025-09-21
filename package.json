@@ -17,5 +17,10 @@
     "react-dom": "18.2.0",
     "googleapis": "^131.0.0",
     "google-auth-library": "^9.14.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/react": "^18.2.48",
+    "@types/node": "^20.14.2"
   }
 }
